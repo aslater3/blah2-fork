@@ -58,7 +58,7 @@ public:
   /// @param path Path to save IQ data.
   /// @return The object.
   Kraken(std::string type, uint32_t fc, uint32_t fs, std::string path, 
-    bool *saveIq, std::vector<double> gain);
+    bool *saveIq, std::vector<double> gain, std::vector<std::string> serials);
 
   /// @brief Implement capture function on KrakenSDR.
   /// @param buffer Pointers to buffers for each channel.

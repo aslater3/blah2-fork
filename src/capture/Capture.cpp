@@ -140,13 +140,19 @@ std::unique_ptr<Source> Capture::factory_source(const std::string& type, c4::yml
     else if (type == VALID_TYPE[3])
     {
       std::vector<double> gain;
+      std::vector<std::string> serials;
       float _gain;
       for (auto child : config["gain"].children())
       {
         c4::atof(child.val(), &_gain);
         gain.push_back(static_cast<double>(_gain));
       }
-      return std::make_unique<Kraken>(type, fc, fs, path, &saveIq, gain);
+      // optional serial mapping: zero or more entries
+      for (auto child : config["serial"].children())
+      {
+        serials.emplace_back(child.val().data(), child.val().size());
+      }
+      return std::make_unique<Kraken>(type, fc, fs, path, &saveIq, gain, serials);
     }
     // handle unknown type
     std::cerr << "Error: Source type does not exist." << std::endl;
