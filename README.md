@@ -17,7 +17,7 @@ A real-time radar which can support various SDR platforms. See a live instance a
 - [SDRplay RSPDuo](https://www.sdrplay.com/rspduo/).
 - [USRP](https://www.ettus.com/products/) (only tested on the B210).
 - 2x [HackRF](https://greatscottgadgets.com/hackrf/) with clock synchronisation and hardware trigger.
-- 2x [RTL-SDR](https://www.rtl-sdr.com/) with clock synchronisation.
+- 2x [RTL-SDR](https://www.rtl-sdr.com/) with clock synchronisation (capture type `dual-rtl`).
 - [KrakenSDR](https://www.krakenrf.com/) with 2x channels only.
 
 ## Services
@@ -35,7 +35,7 @@ Building the code using the following instructions;
 - Install docker and docker-compose on the host machine.
 - Clone this repository to some directory.
 - Install SDRplay API to run service on host.
-- Edit the `config/config.yml` for desired processing parameters.
+- Edit the `config/config.yml` for desired processing parameters (see also `config/config-hackrf.yml`, `config/config-usrp.yml`, `config/config-kraken.yml`, `config/config-dualrtl.yml` for device-specific templates).
 - Run the docker-compose command.
 
 ```bash

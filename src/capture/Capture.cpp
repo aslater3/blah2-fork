@@ -8,7 +8,7 @@
 #include <httplib.h>
 
 // constants
-const std::string Capture::VALID_TYPE[4] = {"RspDuo", "Usrp", "HackRF", "Kraken"};
+const std::string Capture::VALID_TYPE[5] = {"RspDuo", "Usrp", "HackRF", "Kraken", "dual-rtl"};
 
 // constructor
 Capture::Capture(std::string _type, uint32_t _fs, uint32_t _fc, std::string _path)
@@ -148,6 +148,23 @@ std::unique_ptr<Source> Capture::factory_source(const std::string& type, c4::yml
         gain.push_back(static_cast<double>(_gain));
       }
       // optional serial mapping: zero or more entries
+      for (auto child : config["serial"].children())
+      {
+        serials.emplace_back(child.val().data(), child.val().size());
+      }
+      return std::make_unique<Kraken>(type, fc, fs, path, &saveIq, gain, serials);
+    }
+    // dual RTL-SDR pair
+    else if (type == VALID_TYPE[4])
+    {
+      std::vector<double> gain;
+      std::vector<std::string> serials;
+      float _gain;
+      for (auto child : config["gain"].children())
+      {
+        c4::atof(child.val(), &_gain);
+        gain.push_back(static_cast<double>(_gain));
+      }
       for (auto child : config["serial"].children())
       {
         serials.emplace_back(child.val().data(), child.val().size());
