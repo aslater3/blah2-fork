@@ -46,6 +46,7 @@ add_executable(blah2
   src/capture/rspduo/RspDuo.cpp
   src/capture/usrp/Usrp.cpp
   src/capture/hackrf/HackRf.cpp
+  src/capture/dualrtl/DualRtl.cpp
   src/capture/kraken/Kraken.cpp
   src/process/ambiguity/Ambiguity.cpp
   src/process/clutter/WienerHopf.cpp

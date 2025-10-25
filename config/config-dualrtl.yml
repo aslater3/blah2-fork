@@ -5,6 +5,12 @@ capture:
     type: "dual-rtl"
     gain: [15.0, 15.0]
     serial: ["00000001", "00000002"]
+    sync:
+      enable: true
+      seconds: 0.25
+      search: 131072
+      min_snr_db: 10.0
+      calibration_fc: 0
   replay:
     state: false
     loop: true

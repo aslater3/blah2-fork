@@ -3,6 +3,7 @@
 #include "usrp/Usrp.h"
 #include "hackrf/HackRf.h"
 #include "kraken/Kraken.h"
+#include "dualrtl/DualRtl.h"
 #include <iostream>
 #include <thread>
 #include <httplib.h>
@@ -165,11 +166,45 @@ std::unique_ptr<Source> Capture::factory_source(const std::string& type, c4::yml
         c4::atof(child.val(), &_gain);
         gain.push_back(static_cast<double>(_gain));
       }
-      for (auto child : config["serial"].children())
+      auto serialNode = config.find_child(c4::to_csubstr("serial"));
+      if (serialNode.valid())
       {
-        serials.emplace_back(child.val().data(), child.val().size());
+        for (auto child : serialNode.children())
+        {
+          serials.emplace_back(child.val().data(), child.val().size());
+        }
       }
-      return std::make_unique<Kraken>(type, fc, fs, path, &saveIq, gain, serials);
+      DualRtl::SyncConfig syncCfg;
+      auto syncNode = config.find_child(c4::to_csubstr("sync"));
+      if (syncNode.valid())
+      {
+        auto enableNode = syncNode.find_child(c4::to_csubstr("enable"));
+        if (enableNode.valid())
+        {
+          enableNode >> syncCfg.enable;
+        }
+        auto secondsNode = syncNode.find_child(c4::to_csubstr("seconds"));
+        if (secondsNode.valid())
+        {
+          secondsNode >> syncCfg.seconds;
+        }
+        auto searchNode = syncNode.find_child(c4::to_csubstr("search"));
+        if (searchNode.valid())
+        {
+          searchNode >> syncCfg.search;
+        }
+        auto snrNode = syncNode.find_child(c4::to_csubstr("min_snr_db"));
+        if (snrNode.valid())
+        {
+          snrNode >> syncCfg.minSnrDb;
+        }
+        auto fcNode = syncNode.find_child(c4::to_csubstr("calibration_fc"));
+        if (fcNode.valid())
+        {
+          fcNode >> syncCfg.calibrationFc;
+        }
+      }
+      return std::make_unique<DualRtl>(type, fc, fs, path, &saveIq, gain, serials, syncCfg);
     }
     // handle unknown type
     std::cerr << "Error: Source type does not exist." << std::endl;
