@@ -18,7 +18,7 @@ find_package(Armadillo CONFIG REQUIRED)
 find_package(Catch2 CONFIG REQUIRED)
 
 set(CMAKE_PREFIX_PATH "/opt/uhd" ${CMAKE_PREFIX_PATH})
-find_package(UHD "4.8.0.0" CONFIG REQUIRED)
+find_package(UHD CONFIG REQUIRED)
 
 set(PROJECT_ROOT "${PROJECT_SOURCE_DIR}")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_ROOT}/bin")
@@ -46,6 +46,7 @@ add_executable(blah2
   src/capture/rspduo/RspDuo.cpp
   src/capture/usrp/Usrp.cpp
   src/capture/hackrf/HackRf.cpp
+  src/capture/dualrtl/DualRtl.cpp
   src/capture/kraken/Kraken.cpp
   src/process/ambiguity/Ambiguity.cpp
   src/process/clutter/WienerHopf.cpp
