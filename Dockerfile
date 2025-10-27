@@ -8,10 +8,10 @@ RUN apt-get update && apt-get install -y software-properties-common \
   && apt-add-repository ppa:ettusresearch/uhd \
   && apt-get update \
   && DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y \
-  g++ make cmake git curl zip unzip doxygen graphviz \
+  g++ make cmake git curl zip unzip doxygen graphviz ninja-build \
   libfftw3-dev pkg-config gfortran libhackrf-dev \
-  libuhd-dev=4.9.0.0-0ubuntu1~jammy2 \
-  uhd-host=4.9.0.0-0ubuntu1~jammy2 \
+  libuhd-dev \
+  uhd-host \
   libusb-dev libusb-1.0.0-dev \
   && apt-get autoremove -y \
   && apt-get clean -y \
@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y software-properties-common \
 
 # install dependencies from vcpkg
 ENV VCPKG_ROOT=/opt/vcpkg
+ENV VCPKG_FORCE_SYSTEM_BINARIES=1
 RUN export PATH="/opt/vcpkg:${PATH}" \
   && git clone https://github.com/microsoft/vcpkg /opt/vcpkg \
   && if [ "$(uname -m)" = "aarch64" ]; then export VCPKG_FORCE_SYSTEM_BINARIES=1; fi \
@@ -30,6 +31,10 @@ RUN export PATH="/opt/vcpkg:${PATH}" \
 RUN export ARCH=$(uname -m) \
     && if [ "$ARCH" = "x86_64" ]; then \
         ARCH="amd64"; \
+    elif [ "$ARCH" = "aarch64" ]; then \
+        ARCH="arm64"; \
+    elif [ "$ARCH" = "armv7l" ]; then \
+        ARCH="armhf"; \
     fi \
   && export MAJVER="3.15" \
   && export MINVER="2" \
