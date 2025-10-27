@@ -251,8 +251,18 @@ bool DualRtl::measure_initial_offset()
   std::thread t1(capture_block, devs[1], std::ref(raw1), std::ref(status1), std::ref(bytes1));
   t0.join();
   t1.join();
-  check_status(status0, "[dual-rtl] Failed to read sync block channel 0.");
-  check_status(status1, "[dual-rtl] Failed to read sync block channel 1.");
+  if (status0 < 0)
+  {
+    std::cerr << "[dual-rtl] Failed to read sync block channel 0: status " << status0
+              << " (" << strerror(-status0) << ")." << std::endl;
+    return false;
+  }
+  if (status1 < 0)
+  {
+    std::cerr << "[dual-rtl] Failed to read sync block channel 1: status " << status1
+              << " (" << strerror(-status1) << ")." << std::endl;
+    return false;
+  }
   if (bytes0 < static_cast<int>(raw0.size()) || bytes1 < static_cast<int>(raw1.size()))
   {
     std::cerr << "[dual-rtl] Sync capture short read ("
