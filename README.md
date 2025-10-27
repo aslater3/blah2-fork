@@ -17,7 +17,7 @@ A real-time radar which can support various SDR platforms. See a live instance a
 - [SDRplay RSPDuo](https://www.sdrplay.com/rspduo/).
 - [USRP](https://www.ettus.com/products/) (only tested on the B210).
 - 2x [HackRF](https://greatscottgadgets.com/hackrf/) with clock synchronisation and hardware trigger.
-- 2x [RTL-SDR](https://www.rtl-sdr.com/) with clock synchronisation (capture type `dual-rtl`, includes optional USB offset calibration).
+- 2x [RTL-SDR](https://www.rtl-sdr.com/) with clock synchronisation (capture type `dual-rtl`, includes optional USB offset calibration; `gain[0]`/`serial[0]` map to the reference channel, `gain[1]`/`serial[1]` to surveillance).
 - [KrakenSDR](https://www.krakenrf.com/) with 2x channels only.
 
 ## Services

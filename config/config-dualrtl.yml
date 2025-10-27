@@ -1,10 +1,11 @@
+# Reference channel is index 0, surveillance channel is index 1. Keep arrays ordered accordingly.
 capture:
   fs: 2000000
   fc: 204640000
   device:
     type: "dual-rtl"
-    gain: [15.0, 15.0]
-    serial: ["00000001", "00000002"]
+    gain: [15.0, 15.0]        # gain[0] applies to reference channel (serial[0]); gain[1] to surveillance channel (serial[1])
+    serial: ["00000001", "00000002"]  # serial[0] -> reference, serial[1] -> surveillance
     sync:
       enable: true
       seconds: 0.25
