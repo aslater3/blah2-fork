@@ -222,6 +222,13 @@ bool DualRtl::measure_initial_offset()
   int32_t maxLag = std::max<int32_t>(1, syncConfig.search);
   samplesRequested = std::max(samplesRequested, static_cast<size_t>(2 * maxLag + 1));
 
+  // align to RTL-SDR transfer size (multiple of 16384 samples).
+  constexpr size_t kSampleAlign = 16384;
+  if (samplesRequested % kSampleAlign != 0)
+  {
+    samplesRequested = ((samplesRequested / kSampleAlign) + 1) * kSampleAlign;
+  }
+
   uint32_t measurementFc = syncConfig.calibrationFc != 0 ? syncConfig.calibrationFc : fc;
   bool retuned = measurementFc != fc;
   if (retuned)
