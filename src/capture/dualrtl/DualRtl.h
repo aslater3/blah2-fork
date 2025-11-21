@@ -40,6 +40,8 @@ private:
   {
     IqData *buffer = nullptr;
     std::atomic<size_t> dropSamples{0};
+    std::complex<double> phaseCorrection{1.0, 0.0};
+    bool applyPhaseCorrection = false;
   };
 
   std::vector<int> channelIndex;
@@ -47,12 +49,13 @@ private:
   rtlsdr_dev_t *devs[2] = {nullptr, nullptr};
   SyncConfig syncConfig;
   std::array<size_t, 2> initialDrop{{0, 0}};
+  std::complex<double> phaseCorrection{1.0, 0.0};
   double lastMeasuredSnrDb = 0.0;
   int64_t lastMeasuredOffset = 0;
 
   void check_status(int status, const std::string &message);
   bool measure_initial_offset();
-  std::optional<int64_t> estimate_offset(const std::vector<std::complex<double>> &ref,
+  std::optional<std::pair<int64_t, std::complex<double>>> estimate_offset(const std::vector<std::complex<double>> &ref,
                                          const std::vector<std::complex<double>> &surv,
                                          double &snrDb,
                                          int32_t maxLag);

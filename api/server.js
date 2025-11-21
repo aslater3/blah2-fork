@@ -69,6 +69,14 @@ app.get('/api/iqdata', (req, res) => {
 app.get('/api/config', (req, res) => {
   res.send(config);
 });
+app.get('/api/calibration', (req, res) => {
+  try {
+    const calData = fs.readFileSync('calibration.json', 'utf8');
+    res.send(JSON.parse(calData));
+  } catch (e) {
+    res.status(404).send({ error: 'Calibration data not found' });
+  }
+});
 app.get('/api/adsb2dd', (req, res) => {
   if (config.truth.adsb.enabled == true) {
     const api_url = "http://" + config.truth.adsb.adsb2dd + "/api/dd";

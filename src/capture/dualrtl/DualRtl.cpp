@@ -11,6 +11,8 @@
 #include <iostream>
 #include <stdexcept>
 #include <thread>
+#include <fstream>
+#include <iomanip>
 
 namespace
 {
@@ -148,6 +150,10 @@ void DualRtl::process(IqData *buffer1, IqData *buffer2)
   channelState[0].dropSamples.store(initialDrop[0], std::memory_order_relaxed);
   channelState[1].dropSamples.store(initialDrop[1], std::memory_order_relaxed);
 
+  // Apply phase correction to the second channel (surveillance)
+  channelState[1].phaseCorrection = phaseCorrection;
+  channelState[1].applyPhaseCorrection = true;
+
   std::vector<std::thread> threads;
   for (size_t i = 0; i < kMaxChannels; ++i)
   {
@@ -193,11 +199,25 @@ void DualRtl::callback(unsigned char *buf, uint32_t len, void *ctx)
   }
 
   state->buffer->lock();
-  for (size_t i = startIndex; i < totalSamples; ++i)
+  if (state->applyPhaseCorrection)
   {
-    double iqi = static_cast<double>(src[2 * i]);
-    double iqq = static_cast<double>(src[2 * i + 1]);
-    state->buffer->push_back({iqi, iqq});
+    for (size_t i = startIndex; i < totalSamples; ++i)
+    {
+      double iqi = static_cast<double>(src[2 * i]);
+      double iqq = static_cast<double>(src[2 * i + 1]);
+      std::complex<double> s(iqi, iqq);
+      s *= state->phaseCorrection;
+      state->buffer->push_back({s.real(), s.imag()});
+    }
+  }
+  else
+  {
+    for (size_t i = startIndex; i < totalSamples; ++i)
+    {
+      double iqi = static_cast<double>(src[2 * i]);
+      double iqq = static_cast<double>(src[2 * i + 1]);
+      state->buffer->push_back({iqi, iqq});
+    }
   }
   state->buffer->unlock();
 }
@@ -229,16 +249,18 @@ bool DualRtl::measure_initial_offset()
     samplesRequested = ((samplesRequested / kSampleAlign) + 1) * kSampleAlign;
   }
 
-  uint32_t measurementFc = syncConfig.calibrationFc != 0 ? syncConfig.calibrationFc : fc;
-  bool retuned = measurementFc != fc;
-  if (retuned)
-  {
-    for (auto *dev : devs)
-    {
-      check_status(rtlsdr_set_center_freq(dev, measurementFc), "[dual-rtl] Failed to set calibration frequency.");
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  }
+  // Disable retuning to ensure phase synchronization is maintained.
+  // uint32_t measurementFc = syncConfig.calibrationFc != 0 ? syncConfig.calibrationFc : fc;
+  // bool retuned = measurementFc != fc;
+  bool retuned = false;
+  // if (retuned)
+  // {
+  //   for (auto *dev : devs)
+  //   {
+  //     check_status(rtlsdr_set_center_freq(dev, measurementFc), "[dual-rtl] Failed to set calibration frequency.");
+  //   }
+  //   std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  // }
 
   std::vector<unsigned char> raw0(samplesRequested * 2);
   std::vector<unsigned char> raw1(samplesRequested * 2);
@@ -304,24 +326,25 @@ bool DualRtl::measure_initial_offset()
   auto ref = convert_samples(raw0);
   auto surv = convert_samples(raw1);
 
-  if (retuned)
-  {
-    for (auto *dev : devs)
-    {
-      check_status(rtlsdr_set_center_freq(dev, fc), "[dual-rtl] Failed to restore center frequency.");
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-  }
+  // if (retuned)
+  // {
+  //   for (auto *dev : devs)
+  //   {
+  //     check_status(rtlsdr_set_center_freq(dev, fc), "[dual-rtl] Failed to restore center frequency.");
+  //   }
+  //   std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  // }
 
   double snrDb = 0.0;
-  auto lagOpt = estimate_offset(ref, surv, snrDb, maxLag);
-  if (!lagOpt)
+  auto resultOpt = estimate_offset(ref, surv, snrDb, maxLag);
+  if (!resultOpt)
   {
     std::cerr << "[dual-rtl] Unable to compute correlation-based offset." << std::endl;
     return false;
   }
 
-  lastMeasuredOffset = *lagOpt;
+  lastMeasuredOffset = resultOpt->first;
+  phaseCorrection = resultOpt->second;
   lastMeasuredSnrDb = snrDb;
 
   if (std::abs(lastMeasuredOffset) > maxLag)
@@ -343,17 +366,30 @@ bool DualRtl::measure_initial_offset()
 
   double offsetUs = (static_cast<double>(lastMeasuredOffset) / static_cast<double>(fs)) * 1e6;
   std::cout << "[dual-rtl] Measured initial offset " << lastMeasuredOffset << " samples ("
-            << offsetUs << " us) SNR=" << snrDb << " dB" << std::endl;
+            << offsetUs << " us) Phase=" << std::arg(phaseCorrection) << " rad SNR=" << snrDb << " dB" << std::endl;
   if (snrDb < syncConfig.minSnrDb)
   {
     std::cerr << "[dual-rtl] Warning: correlation peak SNR " << snrDb
               << " dB below threshold " << syncConfig.minSnrDb << " dB." << std::endl;
   }
 
+  // Write calibration data to file
+  std::ofstream calFile("calibration.json");
+  if (calFile.is_open())
+  {
+    calFile << "{\n";
+    calFile << "  \"offset_samples\": " << lastMeasuredOffset << ",\n";
+    calFile << "  \"offset_us\": " << offsetUs << ",\n";
+    calFile << "  \"phase_rad\": " << std::arg(phaseCorrection) << ",\n";
+    calFile << "  \"snr_db\": " << snrDb << "\n";
+    calFile << "}\n";
+    calFile.close();
+  }
+
   return true;
 }
 
-std::optional<int64_t> DualRtl::estimate_offset(const std::vector<std::complex<double>> &ref,
+std::optional<std::pair<int64_t, std::complex<double>>> DualRtl::estimate_offset(const std::vector<std::complex<double>> &ref,
                                                 const std::vector<std::complex<double>> &surv,
                                                 double &snrDb,
                                                 int32_t maxLag)
@@ -421,6 +457,7 @@ std::optional<int64_t> DualRtl::estimate_offset(const std::vector<std::complex<d
 
   int64_t bestLag = 0;
   double bestMag = -1.0;
+  std::complex<double> bestVal(0.0, 0.0);
   double noiseSum = 0.0;
   size_t considered = 0;
 
@@ -445,6 +482,7 @@ std::optional<int64_t> DualRtl::estimate_offset(const std::vector<std::complex<d
       }
       bestMag = mag;
       bestLag = lag;
+      bestVal = {Z[idx][0], Z[idx][1]};
     }
     else
     {
@@ -467,5 +505,12 @@ std::optional<int64_t> DualRtl::estimate_offset(const std::vector<std::complex<d
 
   double avgNoise = noiseSum / static_cast<double>(considered - 1);
   snrDb = 20.0 * std::log10(bestMag / (avgNoise + 1e-9));
-  return bestLag;
+  
+  // Calculate phase correction
+  // Z = X * conj(Y). Peak phase is phase(X) - phase(Y).
+  // We want to rotate Y to match X, so we multiply Y by exp(j * (phase(X) - phase(Y))).
+  // This is exactly exp(j * arg(Z_peak)).
+  std::complex<double> correction = std::exp(std::complex<double>(0, std::arg(bestVal)));
+
+  return std::make_pair(bestLag, correction);
 }
