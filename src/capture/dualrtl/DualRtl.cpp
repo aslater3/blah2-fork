@@ -252,7 +252,6 @@ bool DualRtl::measure_initial_offset()
   // Disable retuning to ensure phase synchronization is maintained.
   // uint32_t measurementFc = syncConfig.calibrationFc != 0 ? syncConfig.calibrationFc : fc;
   // bool retuned = measurementFc != fc;
-  bool retuned = false;
   // if (retuned)
   // {
   //   for (auto *dev : devs)

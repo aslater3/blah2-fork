@@ -1,5 +1,3 @@
-version: '3'
-
 networks:
     blah2:
       external: true
@@ -15,7 +13,7 @@ services:
       - blah2_api
     volumes:
       - ./config:/blah2/config
-      - /opt/blah2/save:/blah2/save
+      - ./save:/blah2/save
       - /dev/shm:/dev/shm:rw
       - /dev/usb:/dev/usb:rw
     network_mode: host
@@ -27,12 +25,23 @@ services:
     restart: always
     image: httpd:2.4
     ports: 
-      - 49152:80
+      - 49154:80
     volumes:
       - ./html:/usr/local/apache2/htdocs
     networks:
       - blah2
     container_name: blah2-web
+
+  blah2_web_v2:
+    restart: always
+    image: nginx:alpine
+    ports: 
+      - 49153:80
+    volumes:
+      - ./html_v2:/usr/share/nginx/html
+    networks:
+      - blah2
+    container_name: blah2-web-v2
 
   blah2_api:
     restart: always

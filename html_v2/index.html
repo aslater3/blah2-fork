@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="UTF-8">
+  <title>blah2 - Passive Radar</title>
+  <link rel="icon" type="image/x-icon" href="/favicon/favicon-16x16.png" sizes="16x16">
+  <link rel="icon" type="image/x-icon" href="/favicon/favicon-32x32.png" sizes="32x32">
+  <link rel="icon" type="image/x-icon" href="/favicon/favicon-128x128.png" sizes="128x128">
+  <link rel="icon" type="image/x-icon" href="/favicon/favicon-196x196.png" sizes="196x196">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <!-- load lib js -->
+  <script src="./lib/bootstrap-5.2.3.min.js"></script>
+  <script src="./lib/plotly-2.20.0.min.js"></script>
+  <script src="./lib/jquery-3.6.4.min.js"></script>
+  
+  <!-- load lib css -->
+  <link rel="stylesheet" href="./lib/bootstrap-5.2.3.min.css">
+  <link rel="stylesheet" href="./lib/blah2.css">
+</head>
+<body>
+  <div class="dashboard-container">
+    <!-- Main Content -->
+    <div class="main-content">
+      <div id="data"></div>
+    </div>
+  </div>
+
+  <script>
+    var urlMap = '/api/map';
+  </script>
+  <script src="js/common.js"></script>
+  <script src="js/plot_map.js"></script>
+  <script src="control.js"></script>
+  <script src="js/navigation.js"></script>
+</body>
+</html>
