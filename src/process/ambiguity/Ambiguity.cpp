@@ -65,6 +65,13 @@ Ambiguity::Ambiguity(int32_t _delayMin, int32_t _delayMax,
   }
   dataCorr.resize(2 * nDelayBins + 1);
 
+  // precompute Hanning window for batch correlation blocks
+  hanningWindow.resize(nCorr);
+  for (uint32_t i = 0; i < nCorr; i++)
+  {
+    hanningWindow[i] = 0.5 * (1.0 - std::cos(2.0 * M_PI * i / (nCorr - 1)));
+  }
+
   // compute FFTW plans in constructor
   dataXi.resize(nfft);
   dataYi.resize(nfft);
@@ -107,8 +114,11 @@ Map<std::complex<double>> *Ambiguity::process(IqData *x, IqData *y)
   {
     for (uint16_t j = 0; j < nCorr; j++)
     {
-      dataXi[j] = x->pop_front();
-      dataYi[j] = y->pop_front();
+      Complex xSample = x->pop_front();
+      Complex ySample = y->pop_front();
+      // apply Hanning window to reduce spectral leakage sidelobes
+      dataXi[j] = xSample * hanningWindow[j];
+      dataYi[j] = ySample * hanningWindow[j];
     }
 
     for (uint16_t j = nCorr; j < nfft; j++)

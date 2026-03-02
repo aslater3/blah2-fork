@@ -15,7 +15,7 @@ Map<T>::Map(uint32_t _nRows, uint32_t _nCols)
 {
   nRows = _nRows;
   nCols = _nCols;
-  std::vector<std::vector<T>> tmp(nRows, std::vector<T>(nCols, {1}));
+  std::vector<std::vector<T>> tmp(nRows, std::vector<T>(nCols, {0}));
   data = tmp;
 }
 
@@ -102,14 +102,18 @@ void Map<T>::print()
 template <class T>
 uint32_t Map<T>::doppler_hz_to_bin(double dopplerHz)
 {
-  for (size_t i = 0; i < doppler.size(); i++)
+  uint32_t bestIdx = 0;
+  double bestDist = std::abs(dopplerHz - doppler[0]);
+  for (size_t i = 1; i < doppler.size(); i++)
   {
-    if (dopplerHz == doppler[i])
+    double dist = std::abs(dopplerHz - doppler[i]);
+    if (dist < bestDist)
     {
-      return (int) i;
+      bestDist = dist;
+      bestIdx = static_cast<uint32_t>(i);
     }
   }
-  return 0;
+  return bestIdx;
 }
 
 template <class T>
@@ -187,22 +191,28 @@ std::string Map<T>::delay_bin_to_km(std::string json, uint32_t fs)
 template <class T>
 void Map<T>::set_metrics()
 {
-  // get map noise level
-  double value;
-  double noisePower = 0;
-  double maxPower = 0;
+  // compute noise level as mean power (linear), then convert to dB
+  // this avoids the bias from averaging in the log domain
+  double sumPower = 0.0;
+  double maxPowerDb = -1e30;
   for (uint32_t i = 0; i < nRows; i++)
   {
     for (uint32_t j = 0; j < nCols; j++)
     {
-      value = 10 * std::log10(std::abs(data[i][j]));
-      noisePower = noisePower + value;
-      maxPower = (maxPower < value) ? value : maxPower;
+      double mag = std::abs(data[i][j]);
+      double power = mag * mag;
+      sumPower += power;
+      double valueDb = 10.0 * std::log10(mag + 1e-30);
+      if (valueDb > maxPowerDb)
+      {
+        maxPowerDb = valueDb;
+      }
     }
   }
-  noisePower = noisePower / (nRows * nCols);
-  this->noisePower = noisePower;
-  this->maxPower = maxPower - noisePower;
+  double meanPower = sumPower / (nRows * nCols);
+  double noisePowerDb = 10.0 * std::log10(std::sqrt(meanPower) + 1e-30);
+  this->noisePower = noisePowerDb;
+  this->maxPower = maxPowerDb - noisePowerDb;
 }
 
 template <class T>

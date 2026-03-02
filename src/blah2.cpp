@@ -7,6 +7,7 @@
 #include "data/Map.h"
 #include "data/Detection.h"
 #include "data/meta/Timing.h"
+#include "data/meta/Diagnostic.h"
 #include "data/Track.h"
 #include "process/ambiguity/Ambiguity.h"
 #include "process/clutter/WienerHopf.h"
@@ -25,6 +26,7 @@
 #include <getopt.h>
 #include <string>
 #include <vector>
+#include <deque>
 #include <fstream>
 #include <sstream>
 #include <thread>
@@ -34,6 +36,8 @@
 #include <atomic>
 #include <memory>
 #include <iostream>
+#include <cmath>
+#include <algorithm>
 
 Capture *CAPTURE_POINTER = NULL;
 
@@ -46,6 +50,9 @@ uint64_t current_time_us();
 void timing_helper(std::vector<std::string>& timing_name, 
   std::vector<double>& timing_time, std::vector<uint64_t>& time_us, 
   std::string name);
+double zero_lag_power(const std::deque<std::complex<double>> &x,
+  const std::deque<std::complex<double>> &y);
+std::vector<double> zero_doppler_row_db(Map<std::complex<double>> *map);
 
 int main(int argc, char **argv)
 {
@@ -162,11 +169,18 @@ int main(int argc, char **argv)
   tree["process"]["detection"]["minDoppler"] >> minDoppler;
   CfarDetector1D *cfarDetector1D = new CfarDetector1D(pfa, nGuard, nTrain, minDelay, minDoppler);
   Interpolate *interpolate = new Interpolate(true, true);
+  bool cfarDebug = false;
+  auto cfarDebugNode = tree["process"]["detection"].find_child(c4::to_csubstr("cfarDebug"));
+  if (cfarDebugNode.valid())
+  {
+    cfarDebugNode >> cfarDebug;
+  }
 
   // setup process centroid
+  // use actual CPI from ambiguity processor (accounts for integer truncation)
   uint16_t nCentroid;
   tree["process"]["detection"]["nCentroid"] >> nCentroid;
-  Centroid *centroid = new Centroid(nCentroid, nCentroid, 1/tCpi);
+  Centroid *centroid = new Centroid(nCentroid, nCentroid, 1.0/ambiguity->get_cpi());
 
   // setup process tracker
   uint8_t m, n, nDelete;
@@ -195,11 +209,24 @@ int main(int argc, char **argv)
   }
 
   // setup output data
-  bool saveMap, saveDetection;
+  bool saveMap, saveDetection, saveTiming, saveDiagnostic, saveZeroDoppler;
   tree["save"]["map"] >> saveMap;
   tree["save"]["detection"] >> saveDetection;
-  std::string savePath, saveMapPath, saveDetectionPath;
-  if (saveIq || saveMap || saveDetection)
+  tree["save"]["timing"] >> saveTiming;
+  saveDiagnostic = saveMap || saveDetection || saveTiming;
+  auto saveDiagnosticNode = tree["save"].find_child(c4::to_csubstr("diagnostic"));
+  if (saveDiagnosticNode.valid())
+  {
+    saveDiagnosticNode >> saveDiagnostic;
+  }
+  saveZeroDoppler = false;
+  auto zeroDopplerNode = tree["save"].find_child(c4::to_csubstr("zeroDopplerRow"));
+  if (zeroDopplerNode.valid())
+  {
+    zeroDopplerNode >> saveZeroDoppler;
+  }
+  std::string savePath, saveMapPath, saveDetectionPath, saveTimingPath, cfarDebugPath;
+  if (saveIq || saveMap || saveDetection || saveTiming || saveDiagnostic || saveZeroDoppler || cfarDebug)
   {
     char startTimeStr[16];
     struct timeval currentTime = {0, 0};
@@ -215,6 +242,23 @@ int main(int argc, char **argv)
   {
     saveDetectionPath = savePath + ".detection";
   }
+  if (saveTiming)
+  {
+    saveTimingPath = savePath + ".timing";
+  }
+  if (cfarDebug)
+  {
+    cfarDebugPath = savePath + ".cfar_debug.jsonl";
+    cfarDetector1D->set_debug_logging(true, cfarDebugPath);
+  }
+
+  std::unique_ptr<Diagnostic> diagnostic;
+  if (saveDiagnostic)
+  {
+    diagnostic = std::make_unique<Diagnostic>(savePath);
+  }
+  uint64_t prevOverflow0 = 0;
+  uint64_t prevOverflow1 = 0;
 
   // setup output timing
   uint64_t tStart = current_time_ms();
@@ -236,6 +280,8 @@ int main(int argc, char **argv)
         if ((buffer1->get_length() > nSamples) && (buffer2->get_length() > nSamples))
         {
           time.push_back(current_time_us());
+          uint64_t overflowCount0 = buffer1->get_overflow_count();
+          uint64_t overflowCount1 = buffer2->get_overflow_count();
           // extract data from buffer
           for (uint32_t i = 0; i < nSamples; i++)
           {
@@ -245,10 +291,21 @@ int main(int argc, char **argv)
           buffer1->unlock();
           buffer2->unlock();
           timing_helper(timing_name, timing_time, time, "extract_buffer");
+
+          uint64_t timestampMs = time[0] / 1000;
+          uint64_t droppedCh0 = overflowCount0 - prevOverflow0;
+          uint64_t droppedCh1 = overflowCount1 - prevOverflow1;
+          prevOverflow0 = overflowCount0;
+          prevOverflow1 = overflowCount1;
           
           // spectrum
           spectrumAnalyser->process(x);
           timing_helper(timing_name, timing_time, time, "spectrum");
+
+          std::deque<std::complex<double>> xPreClutter = x->get_data();
+          std::deque<std::complex<double>> yPreClutter = y->get_data();
+          double clutterPowerBefore = zero_lag_power(xPreClutter, yPreClutter);
+          std::vector<double> zeroDopplerBeforeDb;
           
           // clutter filter
           if (isClutter)
@@ -259,6 +316,27 @@ int main(int argc, char **argv)
             }
             timing_helper(timing_name, timing_time, time, "clutter_filter");
           }
+
+          if (saveZeroDoppler && diagnostic)
+          {
+            IqData xBeforeMap(nSamples);
+            IqData yBeforeMap(nSamples);
+            for (const auto &sample : xPreClutter)
+            {
+              xBeforeMap.push_back(sample);
+            }
+            for (const auto &sample : yPreClutter)
+            {
+              yBeforeMap.push_back(sample);
+            }
+            Map<std::complex<double>> *mapBefore = ambiguity->process(&xBeforeMap, &yBeforeMap);
+            mapBefore->set_metrics();
+            zeroDopplerBeforeDb = zero_doppler_row_db(mapBefore);
+          }
+
+          std::deque<std::complex<double>> xPostClutter = x->get_data();
+          std::deque<std::complex<double>> yPostClutter = y->get_data();
+          double clutterPowerAfter = zero_lag_power(xPostClutter, yPostClutter);
           
           // ambiguity process
           map = ambiguity->process(x, y);
@@ -266,27 +344,78 @@ int main(int argc, char **argv)
           timing_helper(timing_name, timing_time, time, "ambiguity_processing");
           
           // detection process
+          uint32_t nDetectionsRaw = 0;
+          uint32_t nDetectionsCentroid = 0;
+          uint32_t nDetectionsFinal = 0;
           if (isDetection)
           {
-            detection1 = cfarDetector1D->process(map);
+            detection1 = cfarDetector1D->process(map, timestampMs);
             detection2 = centroid->process(detection1.get());
             detection = interpolate->process(detection2.get(), map);
+            nDetectionsRaw = static_cast<uint32_t>(detection1->get_nDetections());
+            nDetectionsCentroid = static_cast<uint32_t>(detection2->get_nDetections());
+            nDetectionsFinal = static_cast<uint32_t>(detection->get_nDetections());
             timing_helper(timing_name, timing_time, time, "detector");
           }
 
           // tracker process
           if (isTracker)
           {
-            track = tracker->process(detection.get(), time[0]/1000);
+            track = tracker->process(detection.get(), timestampMs);
             timing_helper(timing_name, timing_time, time, "tracker");
           }
 
+          if (diagnostic)
+          {
+            diagnostic->set_map_metrics(map->noisePower, map->maxPower);
+            diagnostic->set_clutter_power(clutterPowerBefore, clutterPowerAfter);
+            diagnostic->set_detection_counts(nDetectionsRaw, nDetectionsCentroid, nDetectionsFinal);
+            diagnostic->set_sample_drops(droppedCh0, droppedCh1);
+            diagnostic->set_cfar_rows(cfarDetector1D->get_row_doppler(),
+              cfarDetector1D->get_row_noise_floor(),
+              cfarDetector1D->get_row_threshold(),
+              cfarDetector1D->get_row_detection_count());
+
+            int64_t syncOffsetSamples = 0;
+            double syncSnrDb = 0.0;
+            bool hasSyncMetrics = false;
+            uint64_t sampleDropsDeviceCh0 = 0;
+            uint64_t sampleDropsDeviceCh1 = 0;
+            if (capture->device)
+            {
+              hasSyncMetrics = capture->device->get_sync_metrics(syncOffsetSamples, syncSnrDb);
+              if (capture->device->get_sample_drop_metrics(sampleDropsDeviceCh0, sampleDropsDeviceCh1))
+              {
+                diagnostic->set_sample_drops(sampleDropsDeviceCh0, sampleDropsDeviceCh1);
+              }
+            }
+            diagnostic->set_sync_metrics(syncOffsetSamples, syncSnrDb, hasSyncMetrics);
+
+            if (isDetection && detection)
+            {
+              diagnostic->update_persistence(detection->get_delay(), detection->get_doppler(),
+                detection->get_snr(), timestampMs);
+            }
+            else
+            {
+              const std::vector<double> empty;
+              diagnostic->update_persistence(empty, empty, empty, timestampMs);
+            }
+
+            diagnostic->log_cpi(timestampMs);
+
+            if (saveZeroDoppler)
+            {
+              diagnostic->log_zero_doppler_row(timestampMs, zeroDopplerBeforeDb, zero_doppler_row_db(map));
+            }
+          }
+
           // output IqData meta data
-          jsonIqData = x->to_json(time[0]/1000);
+          jsonIqData = x->to_json(timestampMs);
           socket_iqdata.sendData(jsonIqData);
 
           // output map data
-          mapJson = map->to_json(time[0]/1000);
+          mapJson = map->to_json(timestampMs);
           mapJson = map->delay_bin_to_km(mapJson, fs);
           if (saveMap)
           {
@@ -297,11 +426,11 @@ int main(int argc, char **argv)
           // output detection data
           if (isDetection)
           {
-            detectionJson = detection->to_json(time[0]/1000);
+            detectionJson = detection->to_json(timestampMs);
             detectionJson = detection->delay_bin_to_km(detectionJson, fs);
             socket_detection.sendData(detectionJson);
           }
-          if (saveDetection)
+          if (saveDetection && isDetection)
           {
             detection->save(detectionJson, saveDetectionPath);
           }
@@ -309,7 +438,7 @@ int main(int argc, char **argv)
           // output tracker data
           if (isTracker)
           {
-            jsonTracker = track->to_json(time[0]/1000);
+            jsonTracker = track->to_json(timestampMs);
             socket_track.sendData(jsonTracker);
           }
 
@@ -324,14 +453,18 @@ int main(int argc, char **argv)
           std::cout << "CPI time (ms): " << delta_ms << std::endl;
 
           // output timing data
-          timing->update(time[0]/1000, timing_time, timing_name);
+          timing->update(timestampMs, timing_time, timing_name);
           jsonTiming = timing->to_json();
           socket_timing.sendData(jsonTiming);
+          if (saveTiming)
+          {
+            timing->save(jsonTiming, saveTimingPath);
+          }
           timing_time.clear();
           timing_name.clear();
 
           // output CPI timestamp for updating data
-          std::string t0_string = std::to_string(time[0]/1000);
+          std::string t0_string = std::to_string(timestampMs);
           socket_timestamp.sendData(t0_string);
           time.clear();
 
@@ -456,4 +589,40 @@ void timing_helper(std::vector<std::string>& timing_name,
   double delta_ms = (double)(time_us.back()-time_us[time_us.size()-2]) / 1000;
   timing_name.push_back(name);
   timing_time.push_back(delta_ms);
+}
+
+double zero_lag_power(const std::deque<std::complex<double>> &x,
+  const std::deque<std::complex<double>> &y)
+{
+  size_t n = std::min(x.size(), y.size());
+  if (n == 0)
+  {
+    return 0.0;
+  }
+
+  std::complex<double> corr{0.0, 0.0};
+  for (size_t i = 0; i < n; i++)
+  {
+    corr += y[i] * std::conj(x[i]);
+  }
+  corr /= static_cast<double>(n);
+  return std::norm(corr);
+}
+
+std::vector<double> zero_doppler_row_db(Map<std::complex<double>> *map)
+{
+  std::vector<double> rowDb;
+  if (!map || map->get_nRows() == 0)
+  {
+    return rowDb;
+  }
+
+  uint32_t zeroIdx = map->doppler_hz_to_bin(0.0);
+  std::vector<std::complex<double>> row = map->get_row(zeroIdx);
+  rowDb.reserve(row.size());
+  for (const auto &value : row)
+  {
+    rowDb.push_back(10.0 * std::log10(std::abs(value) + 1e-30) - map->noisePower);
+  }
+  return rowDb;
 }

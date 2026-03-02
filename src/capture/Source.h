@@ -70,6 +70,18 @@ public:
   virtual void replay(IqData *buffer1, IqData *buffer2, 
     std::string file, bool loop) = 0;
 
+  /// @brief Return the latest sync-calibration metrics if supported by device.
+  /// @param offsetSamples Latest measured sample offset.
+  /// @param snrDb Latest measured sync correlation peak SNR in dB.
+  /// @return True if sync metrics are available.
+  virtual bool get_sync_metrics(int64_t &offsetSamples, double &snrDb) const;
+
+  /// @brief Return latest estimated sample-drop counters per channel if available.
+  /// @param ch0 Estimated drops for channel 0.
+  /// @param ch1 Estimated drops for channel 1.
+  /// @return True if sample-drop metrics are available.
+  virtual bool get_sample_drop_metrics(uint64_t &ch0, uint64_t &ch1) const;
+
   /// @brief Open a new file to record IQ.
   /// @details First creates a new file from current timestamp.
   /// Files are of format <path>.<type>.iq.

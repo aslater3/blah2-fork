@@ -62,6 +62,7 @@ add_executable(blah2
   src/data/Detection.cpp
   src/data/Track.cpp
   src/data/meta/Timing.cpp
+  src/data/meta/Diagnostic.cpp
 )
 
 target_link_libraries(blah2 PRIVATE 

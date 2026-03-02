@@ -39,48 +39,57 @@ std::unique_ptr<Detection> Interpolate::process(Detection *x, Map<std::complex<d
     intDoppler = doppler[i];
     intSnrDelay = snr[i];
     intSnrDoppler = snr[i];
+
     // interpolate in delay
     if (doDelay)
     {
-      // check not on boundary
-      if (delay[i] == indexDelay[0] || delay[i] == indexDelay.back())
+      // skip interpolation on boundary but keep the detection
+      int delayIdx = static_cast<int>(delay[i]) - indexDelay[0];
+      if (delayIdx > 0 && delayIdx < static_cast<int>(indexDelay.size()) - 1)
       {
-        continue;
+        uint32_t dopplerBin = y->doppler_hz_to_bin(doppler[i]);
+        intSnr[0] = 10.0*std::log10(std::abs(y->data[dopplerBin][delayIdx-1]) + 1e-30) - y->noisePower;
+        intSnr[1] = 10.0*std::log10(std::abs(y->data[dopplerBin][delayIdx]) + 1e-30) - y->noisePower;
+        intSnr[2] = 10.0*std::log10(std::abs(y->data[dopplerBin][delayIdx+1]) + 1e-30) - y->noisePower;
+        // check detection has peak SNR of neighbours
+        if (intSnr[1] >= intSnr[0] && intSnr[1] >= intSnr[2])
+        {
+          double denom = intSnr[0] - (2*intSnr[1]) + intSnr[2];
+          if (std::abs(denom) > 1e-10)
+          {
+            double fracDelay = (intSnr[0]-intSnr[2])/(2*denom);
+            intSnrDelay = intSnr[1] - (((intSnr[0]-intSnr[2])*fracDelay)/4);
+            intDelay = delay[i] + fracDelay;
+          }
+        }
       }
-      intSnr[0] = (double)10*std::log10(std::abs(y->data[y->doppler_hz_to_bin(doppler[i])][delay[i]-1-indexDelay[0]]))-y->noisePower;
-      intSnr[1] = (double)10*std::log10(std::abs(y->data[y->doppler_hz_to_bin(doppler[i])][delay[i]-indexDelay[0]]))-y->noisePower;
-      intSnr[2] = (double)10*std::log10(std::abs(y->data[y->doppler_hz_to_bin(doppler[i])][delay[i]+1-indexDelay[0]]))-y->noisePower;
-      // check detection has peak SNR of neighbours
-      if (intSnr[1] < intSnr[0] || intSnr[1] < intSnr[2])
-      {
-          std::cout << "Detection dropped (SNR of peak lower)" << std::endl;
-          continue;
-      }
-      intDelay = (intSnr[0]-intSnr[2])/(2*(intSnr[0]-(2*intSnr[1])+intSnr[2]));
-      intSnrDelay = intSnr[1] - (((intSnr[0]-intSnr[2])*intDelay)/4);
-      intDelay = delay[i] + intDelay;
     }
     // interpolate in Doppler
     if (doDoppler)
     {
-      // check not on boundary
-      if (doppler[i] == indexDoppler[0] || doppler[i] == indexDoppler.back())
+      uint32_t dopplerBin = y->doppler_hz_to_bin(doppler[i]);
+      int delayIdx = static_cast<int>(delay[i]) - indexDelay[0];
+      // skip interpolation on boundary but keep the detection
+      if (dopplerBin > 0 && dopplerBin < y->get_nRows() - 1 &&
+          delayIdx >= 0 && delayIdx < static_cast<int>(indexDelay.size()))
       {
-        continue;
+        intSnr[0] = 10.0*std::log10(std::abs(y->data[dopplerBin-1][delayIdx]) + 1e-30) - y->noisePower;
+        intSnr[1] = 10.0*std::log10(std::abs(y->data[dopplerBin][delayIdx]) + 1e-30) - y->noisePower;
+        intSnr[2] = 10.0*std::log10(std::abs(y->data[dopplerBin+1][delayIdx]) + 1e-30) - y->noisePower;
+        // check detection has peak SNR of neighbours
+        if (intSnr[1] >= intSnr[0] && intSnr[1] >= intSnr[2])
+        {
+          double denom = intSnr[0] - (2*intSnr[1]) + intSnr[2];
+          if (std::abs(denom) > 1e-10)
+          {
+            double fracDoppler = (intSnr[0]-intSnr[2])/(2*denom);
+            intSnrDoppler = intSnr[1] - (((intSnr[0]-intSnr[2])*fracDoppler)/4);
+            intDoppler = doppler[i] + ((indexDoppler[1]-indexDoppler[0])*fracDoppler);
+          }
+        }
       }
-      intSnr[0] = (double)10*std::log10(std::abs(y->data[y->doppler_hz_to_bin(doppler[i])-1][delay[i]-indexDelay[0]]))-y->noisePower;
-      intSnr[1] = (double)10*std::log10(std::abs(y->data[y->doppler_hz_to_bin(doppler[i])][delay[i]-indexDelay[0]]))-y->noisePower;
-      intSnr[2] = (double)10*std::log10(std::abs(y->data[y->doppler_hz_to_bin(doppler[i])+1][delay[i]-indexDelay[0]]))-y->noisePower;
-      // check detection has peak SNR of neighbours
-      if (intSnr[1] < intSnr[0] || intSnr[1] < intSnr[2])
-      {
-          continue;
-      }
-      intDoppler = (intSnr[0]-intSnr[2])/(2*(intSnr[0]-(2*intSnr[1])+intSnr[2]));
-      intSnrDelay = intSnr[1] - (((intSnr[0]-intSnr[2])*intDoppler)/4);
-      intDoppler = doppler[i] + ((indexDoppler[1]-indexDoppler[0])*intDoppler);
     }
-    // store interpolated detections
+    // store detection (interpolated or not — never silently drop)
     delay2.push_back(intDelay);
     doppler2.push_back(intDoppler);
     snr2.push_back(std::max(std::max(intSnrDelay, intSnrDoppler), snr[i]));

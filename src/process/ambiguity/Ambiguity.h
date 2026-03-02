@@ -115,6 +115,9 @@ private:
   std::vector<Complex> delayProfile;
   /// @}
 
+  /// @brief Precomputed Hanning window for batch correlation blocks.
+  std::vector<double> hanningWindow;
+
   /// @brief Map to store result.
   std::unique_ptr<Map<Complex>> map;
 

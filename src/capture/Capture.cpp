@@ -203,6 +203,11 @@ std::unique_ptr<Source> Capture::factory_source(const std::string& type, c4::yml
         {
           fcNode >> syncCfg.calibrationFc;
         }
+        auto recalNode = syncNode.find_child(c4::to_csubstr("recalibrate_interval"));
+        if (recalNode.valid())
+        {
+          recalNode >> syncCfg.recalibrateInterval;
+        }
       }
       return std::make_unique<DualRtl>(type, fc, fs, path, &saveIq, gain, serials, syncCfg);
     }

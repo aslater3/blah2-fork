@@ -23,13 +23,17 @@ DualRtl::DualRtl(std::string _type, uint32_t _fc, uint32_t _fs,
                  std::string _path, bool *_saveIq, std::vector<double> _gain,
                  std::vector<std::string> _serials, SyncConfig _sync)
     : Source(std::move(_type), _fc, _fs, std::move(_path), _saveIq),
-      syncConfig(_sync)
+      syncConfig(_sync),
+      lastMeasuredSnrDb(0.0),
+      lastMeasuredOffset(0)
 {
   if (_gain.size() != kMaxChannels)
   {
     throw std::runtime_error("[dual-rtl] Exactly two gain entries are required.");
   }
   initialDrop.fill(0);
+  sampleDropEstimate[0].store(0, std::memory_order_relaxed);
+  sampleDropEstimate[1].store(0, std::memory_order_relaxed);
 
   // choose device indices either by provided serials or default order
   if (!_serials.empty())
@@ -144,9 +148,17 @@ void DualRtl::process(IqData *buffer1, IqData *buffer2)
     }
   }
 
+  // Track CPI cycles for periodic recalibration
+  uint32_t cpiCount = 0;
+  bool needsRecalibration = false;
+
   ChannelState channelState[2];
   channelState[0].buffer = buffer1;
+  channelState[0].owner = this;
+  channelState[0].channelId = 0;
   channelState[1].buffer = buffer2;
+  channelState[1].owner = this;
+  channelState[1].channelId = 1;
   channelState[0].dropSamples.store(initialDrop[0], std::memory_order_relaxed);
   channelState[1].dropSamples.store(initialDrop[1], std::memory_order_relaxed);
 
@@ -154,17 +166,141 @@ void DualRtl::process(IqData *buffer1, IqData *buffer2)
   channelState[1].phaseCorrection = phaseCorrection;
   channelState[1].applyPhaseCorrection = true;
 
-  std::vector<std::thread> threads;
+  // Apply IQ imbalance corrections if estimated during calibration
   for (size_t i = 0; i < kMaxChannels; ++i)
   {
-    // always reset before streaming in case calibration consumed data
-    check_status(rtlsdr_reset_buffer(devs[i]), "[dual-rtl] Failed to reset buffer before streaming.");
-    threads.emplace_back(rtlsdr_read_async, devs[i], callback, &channelState[i], 0, 16 * 16384);
+    if (iqCorrections[i].valid)
+    {
+      channelState[i].iqGainCorr = 1.0 / iqCorrections[i].gainImbalance;
+      channelState[i].iqPhaseCorr = std::sin(iqCorrections[i].phaseImbalance);
+      channelState[i].applyIqCorrection = true;
+      std::cout << "[dual-rtl] IQ correction ch" << i
+                << ": gain=" << channelState[i].iqGainCorr
+                << " phase=" << iqCorrections[i].phaseImbalance << " rad" << std::endl;
+    }
   }
 
-  for (auto &t : threads)
+  // Lambda to run one streaming epoch (runs until buffers are full enough for
+  // the processing thread to consume a CPI, then we check if recalibration
+  // is needed).
+  auto run_streaming = [&]()
   {
-    t.join();
+    for (size_t i = 0; i < kMaxChannels; ++i)
+    {
+      check_status(rtlsdr_reset_buffer(devs[i]), "[dual-rtl] Failed to reset buffer before streaming.");
+    }
+
+    std::vector<std::thread> threads;
+    for (size_t i = 0; i < kMaxChannels; ++i)
+    {
+      threads.emplace_back(rtlsdr_read_async, devs[i], callback, &channelState[i], 0, 16 * 16384);
+    }
+
+    int64_t lastSampleDivergence = 0;
+    // Monitor for recalibration trigger or sample drops.
+    // The async reads run indefinitely; we periodically check.
+    while (true)
+    {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+      // Check for sample drop divergence between channels
+      uint64_t count0 = channelState[0].totalSamples.load(std::memory_order_relaxed);
+      uint64_t count1 = channelState[1].totalSamples.load(std::memory_order_relaxed);
+      int64_t sampleDivergence = static_cast<int64_t>(count0) - static_cast<int64_t>(count1);
+      int64_t deltaDivergence = sampleDivergence - lastSampleDivergence;
+      if (deltaDivergence > 0)
+      {
+        sampleDropEstimate[1].fetch_add(static_cast<uint64_t>(deltaDivergence), std::memory_order_relaxed);
+      }
+      else if (deltaDivergence < 0)
+      {
+        sampleDropEstimate[0].fetch_add(static_cast<uint64_t>(-deltaDivergence), std::memory_order_relaxed);
+      }
+      lastSampleDivergence = sampleDivergence;
+
+      if (std::abs(sampleDivergence) > 16384)
+      {
+        std::cerr << "[dual-rtl] WARNING: Sample count divergence detected: "
+                  << sampleDivergence << " samples (ch0=" << count0
+                  << " ch1=" << count1 << "). Triggering recalibration." << std::endl;
+        needsRecalibration = true;
+      }
+
+      // Check if periodic recalibration is due.
+      // We estimate CPI count from the total samples processed.
+      // A CPI at fs=2.4MHz and cpi=1.0s is ~2.4M samples.
+      uint64_t minSamples = std::min(count0, count1);
+      uint32_t estimatedCpi = static_cast<uint32_t>(minSamples / fs);
+      if (syncConfig.recalibrateInterval > 0 && estimatedCpi > cpiCount)
+      {
+        cpiCount = estimatedCpi;
+        if (cpiCount > 0 && (cpiCount % syncConfig.recalibrateInterval) == 0)
+        {
+          std::cout << "[dual-rtl] Periodic recalibration triggered at CPI #" << cpiCount << std::endl;
+          needsRecalibration = true;
+        }
+      }
+
+      if (needsRecalibration)
+      {
+        // Cancel async reads so we can do synchronous calibration
+        for (size_t i = 0; i < kMaxChannels; ++i)
+        {
+          rtlsdr_cancel_async(devs[i]);
+        }
+        break;
+      }
+    }
+
+    for (auto &t : threads)
+    {
+      t.join();
+    }
+  };
+
+  // Main loop: stream, recalibrate if needed, repeat
+  while (true)
+  {
+    run_streaming();
+
+    if (!needsRecalibration)
+    {
+      break; // Normal exit (shouldn't happen in practice as async reads run forever)
+    }
+
+    // Perform recalibration
+    needsRecalibration = false;
+
+    std::cout << "[dual-rtl] Running recalibration..." << std::endl;
+    if (measure_initial_offset())
+    {
+      // Update channel state with new corrections
+      channelState[0].dropSamples.store(initialDrop[0], std::memory_order_relaxed);
+      channelState[1].dropSamples.store(initialDrop[1], std::memory_order_relaxed);
+      channelState[1].phaseCorrection = phaseCorrection;
+
+      // Update IQ corrections
+      for (size_t i = 0; i < kMaxChannels; ++i)
+      {
+        if (iqCorrections[i].valid)
+        {
+          channelState[i].iqGainCorr = 1.0 / iqCorrections[i].gainImbalance;
+          channelState[i].iqPhaseCorr = std::sin(iqCorrections[i].phaseImbalance);
+          channelState[i].applyIqCorrection = true;
+        }
+      }
+
+      // Reset sample counters
+      channelState[0].totalSamples.store(0, std::memory_order_relaxed);
+      channelState[1].totalSamples.store(0, std::memory_order_relaxed);
+      cpiCount = 0;
+
+      std::cout << "[dual-rtl] Recalibration complete. Resuming streaming." << std::endl;
+    }
+    else
+    {
+      std::cerr << "[dual-rtl] Recalibration failed; continuing with previous corrections." << std::endl;
+    }
   }
 }
 
@@ -175,6 +311,20 @@ void DualRtl::replay(IqData *buffer1, IqData *buffer2, std::string file, bool lo
   (void)file;
   (void)loop;
   std::cerr << "[dual-rtl] Replay not implemented." << std::endl;
+}
+
+bool DualRtl::get_sync_metrics(int64_t &offsetSamples, double &snrDb) const
+{
+  offsetSamples = lastMeasuredOffset.load(std::memory_order_relaxed);
+  snrDb = lastMeasuredSnrDb.load(std::memory_order_relaxed);
+  return syncConfig.enable;
+}
+
+bool DualRtl::get_sample_drop_metrics(uint64_t &ch0, uint64_t &ch1) const
+{
+  ch0 = sampleDropEstimate[0].load(std::memory_order_relaxed);
+  ch1 = sampleDropEstimate[1].load(std::memory_order_relaxed);
+  return true;
 }
 
 void DualRtl::callback(unsigned char *buf, uint32_t len, void *ctx)
@@ -189,6 +339,7 @@ void DualRtl::callback(unsigned char *buf, uint32_t len, void *ctx)
   size_t totalSamples = len / 2;
   size_t startIndex = 0;
 
+  // Drop samples for initial alignment
   size_t dropRemaining = state->dropSamples.load(std::memory_order_relaxed);
   if (dropRemaining > 0)
   {
@@ -196,29 +347,61 @@ void DualRtl::callback(unsigned char *buf, uint32_t len, void *ctx)
     startIndex = toDrop;
     dropRemaining -= toDrop;
     state->dropSamples.store(dropRemaining, std::memory_order_relaxed);
+    if (state->owner)
+    {
+      state->owner->sampleDropEstimate[state->channelId].fetch_add(
+        static_cast<uint64_t>(toDrop), std::memory_order_relaxed);
+    }
   }
 
+  // Update total sample counter for drop detection
+  state->totalSamples.fetch_add(totalSamples - startIndex, std::memory_order_relaxed);
+
   state->buffer->lock();
-  if (state->applyPhaseCorrection)
+
+  for (size_t i = startIndex; i < totalSamples; ++i)
   {
-    for (size_t i = startIndex; i < totalSamples; ++i)
+    double iqi = static_cast<double>(src[2 * i]);
+    double iqq = static_cast<double>(src[2 * i + 1]);
+
+    // DC offset removal using exponential moving average
+    if (!state->dcInitialised)
     {
-      double iqi = static_cast<double>(src[2 * i]);
-      double iqq = static_cast<double>(src[2 * i + 1]);
+      state->dcI = iqi;
+      state->dcQ = iqq;
+      state->dcInitialised = true;
+    }
+    else
+    {
+      state->dcI += state->dcAlpha * (iqi - state->dcI);
+      state->dcQ += state->dcAlpha * (iqq - state->dcQ);
+    }
+    iqi -= state->dcI;
+    iqq -= state->dcQ;
+
+    // IQ imbalance correction
+    // Corrects gain imbalance and quadrature error using:
+    //   I_corrected = I
+    //   Q_corrected = Q * gainCorr - I * phaseCorr
+    if (state->applyIqCorrection)
+    {
+      double correctedQ = iqq * state->iqGainCorr - iqi * state->iqPhaseCorr;
+      iqq = correctedQ;
+    }
+
+    // Phase correction (inter-channel alignment)
+    if (state->applyPhaseCorrection)
+    {
       std::complex<double> s(iqi, iqq);
       s *= state->phaseCorrection;
       state->buffer->push_back({s.real(), s.imag()});
     }
-  }
-  else
-  {
-    for (size_t i = startIndex; i < totalSamples; ++i)
+    else
     {
-      double iqi = static_cast<double>(src[2 * i]);
-      double iqq = static_cast<double>(src[2 * i + 1]);
       state->buffer->push_back({iqi, iqq});
     }
   }
+
   state->buffer->unlock();
 }
 
@@ -228,6 +411,73 @@ void DualRtl::check_status(int status, const std::string &message)
   {
     throw std::runtime_error(message);
   }
+}
+
+void DualRtl::estimate_iq_imbalance(const std::vector<std::complex<double>> &samples,
+                                     IqCorrection &correction)
+{
+  if (samples.size() < 1000)
+  {
+    return;
+  }
+
+  // Estimate DC offset
+  double sumI = 0.0, sumQ = 0.0;
+  for (const auto &s : samples)
+  {
+    sumI += s.real();
+    sumQ += s.imag();
+  }
+  correction.dcI = sumI / static_cast<double>(samples.size());
+  correction.dcQ = sumQ / static_cast<double>(samples.size());
+
+  // Estimate gain and phase imbalance using second-order statistics
+  // E[I^2], E[Q^2], E[I*Q] after DC removal
+  double sumII = 0.0, sumQQ = 0.0, sumIQ = 0.0;
+  for (const auto &s : samples)
+  {
+    double i = s.real() - correction.dcI;
+    double q = s.imag() - correction.dcQ;
+    sumII += i * i;
+    sumQQ += q * q;
+    sumIQ += i * q;
+  }
+  double n = static_cast<double>(samples.size());
+  double eII = sumII / n;
+  double eQQ = sumQQ / n;
+  double eIQ = sumIQ / n;
+
+  // Gain imbalance: ratio of RMS amplitudes
+  if (eII > 0.0)
+  {
+    correction.gainImbalance = std::sqrt(eQQ / eII);
+  }
+  else
+  {
+    correction.gainImbalance = 1.0;
+  }
+
+  // Phase imbalance: correlation coefficient indicates quadrature error
+  double denominator = std::sqrt(eII * eQQ);
+  if (denominator > 0.0)
+  {
+    double rho = eIQ / denominator;
+    // rho ≈ sin(phase_error) for small errors
+    correction.phaseImbalance = std::asin(std::clamp(rho, -1.0, 1.0));
+  }
+  else
+  {
+    correction.phaseImbalance = 0.0;
+  }
+
+  correction.valid = true;
+
+  std::cout << "[dual-rtl] IQ imbalance estimate:"
+            << " dcI=" << correction.dcI
+            << " dcQ=" << correction.dcQ
+            << " gain=" << correction.gainImbalance
+            << " phase=" << correction.phaseImbalance << " rad"
+            << std::endl;
 }
 
 bool DualRtl::measure_initial_offset()
@@ -248,18 +498,6 @@ bool DualRtl::measure_initial_offset()
   {
     samplesRequested = ((samplesRequested / kSampleAlign) + 1) * kSampleAlign;
   }
-
-  // Disable retuning to ensure phase synchronization is maintained.
-  // uint32_t measurementFc = syncConfig.calibrationFc != 0 ? syncConfig.calibrationFc : fc;
-  // bool retuned = measurementFc != fc;
-  // if (retuned)
-  // {
-  //   for (auto *dev : devs)
-  //   {
-  //     check_status(rtlsdr_set_center_freq(dev, measurementFc), "[dual-rtl] Failed to set calibration frequency.");
-  //   }
-  //   std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  // }
 
   std::vector<unsigned char> raw0(samplesRequested * 2);
   std::vector<unsigned char> raw1(samplesRequested * 2);
@@ -325,14 +563,24 @@ bool DualRtl::measure_initial_offset()
   auto ref = convert_samples(raw0);
   auto surv = convert_samples(raw1);
 
-  // if (retuned)
-  // {
-  //   for (auto *dev : devs)
-  //   {
-  //     check_status(rtlsdr_set_center_freq(dev, fc), "[dual-rtl] Failed to restore center frequency.");
-  //   }
-  //   std::this_thread::sleep_for(std::chrono::milliseconds(20));
-  // }
+  // Estimate IQ imbalance for each channel from calibration data
+  // (use raw samples before DC removal for accurate DC estimation)
+  {
+    auto raw_convert = [](const std::vector<unsigned char> &raw)
+    {
+      std::vector<std::complex<double>> out(raw.size() / 2);
+      const int8_t *ptr = reinterpret_cast<const int8_t *>(raw.data());
+      for (size_t i = 0; i < out.size(); ++i)
+      {
+        out[i] = {static_cast<double>(ptr[2 * i]), static_cast<double>(ptr[2 * i + 1])};
+      }
+      return out;
+    };
+    auto rawRef = raw_convert(raw0);
+    auto rawSurv = raw_convert(raw1);
+    estimate_iq_imbalance(rawRef, iqCorrections[0]);
+    estimate_iq_imbalance(rawSurv, iqCorrections[1]);
+  }
 
   double snrDb = 0.0;
   auto resultOpt = estimate_offset(ref, surv, snrDb, maxLag);
@@ -342,33 +590,36 @@ bool DualRtl::measure_initial_offset()
     return false;
   }
 
-  lastMeasuredOffset = resultOpt->first;
+  lastMeasuredOffset.store(resultOpt->first, std::memory_order_relaxed);
   phaseCorrection = resultOpt->second;
-  lastMeasuredSnrDb = snrDb;
+  lastMeasuredSnrDb.store(snrDb, std::memory_order_relaxed);
 
-  if (std::abs(lastMeasuredOffset) > maxLag)
+  int64_t measuredOffset = lastMeasuredOffset.load(std::memory_order_relaxed);
+  double measuredSnrDb = lastMeasuredSnrDb.load(std::memory_order_relaxed);
+
+  if (std::abs(measuredOffset) > maxLag)
   {
     std::cerr << "[dual-rtl] Measured offset exceeds search window." << std::endl;
     return false;
   }
 
-  if (lastMeasuredOffset < 0)
+  if (measuredOffset < 0)
   {
-    initialDrop[0] = static_cast<size_t>(-lastMeasuredOffset);
+    initialDrop[0] = static_cast<size_t>(-measuredOffset);
     initialDrop[1] = 0;
   }
   else
   {
     initialDrop[0] = 0;
-    initialDrop[1] = static_cast<size_t>(lastMeasuredOffset);
+    initialDrop[1] = static_cast<size_t>(measuredOffset);
   }
 
-  double offsetUs = (static_cast<double>(lastMeasuredOffset) / static_cast<double>(fs)) * 1e6;
-  std::cout << "[dual-rtl] Measured initial offset " << lastMeasuredOffset << " samples ("
-            << offsetUs << " us) Phase=" << std::arg(phaseCorrection) << " rad SNR=" << snrDb << " dB" << std::endl;
-  if (snrDb < syncConfig.minSnrDb)
+  double offsetUs = (static_cast<double>(measuredOffset) / static_cast<double>(fs)) * 1e6;
+  std::cout << "[dual-rtl] Measured initial offset " << measuredOffset << " samples ("
+            << offsetUs << " us) Phase=" << std::arg(phaseCorrection) << " rad SNR=" << measuredSnrDb << " dB" << std::endl;
+  if (measuredSnrDb < syncConfig.minSnrDb)
   {
-    std::cerr << "[dual-rtl] Warning: correlation peak SNR " << snrDb
+    std::cerr << "[dual-rtl] Warning: correlation peak SNR " << measuredSnrDb
               << " dB below threshold " << syncConfig.minSnrDb << " dB." << std::endl;
   }
 
@@ -377,10 +628,22 @@ bool DualRtl::measure_initial_offset()
   if (calFile.is_open())
   {
     calFile << "{\n";
-    calFile << "  \"offset_samples\": " << lastMeasuredOffset << ",\n";
+    calFile << "  \"offset_samples\": " << measuredOffset << ",\n";
     calFile << "  \"offset_us\": " << offsetUs << ",\n";
     calFile << "  \"phase_rad\": " << std::arg(phaseCorrection) << ",\n";
-    calFile << "  \"snr_db\": " << snrDb << "\n";
+    calFile << "  \"snr_db\": " << measuredSnrDb << ",\n";
+    calFile << "  \"iq_correction_ch0\": {\n";
+    calFile << "    \"dc_i\": " << iqCorrections[0].dcI << ",\n";
+    calFile << "    \"dc_q\": " << iqCorrections[0].dcQ << ",\n";
+    calFile << "    \"gain_imbalance\": " << iqCorrections[0].gainImbalance << ",\n";
+    calFile << "    \"phase_imbalance_rad\": " << iqCorrections[0].phaseImbalance << "\n";
+    calFile << "  },\n";
+    calFile << "  \"iq_correction_ch1\": {\n";
+    calFile << "    \"dc_i\": " << iqCorrections[1].dcI << ",\n";
+    calFile << "    \"dc_q\": " << iqCorrections[1].dcQ << ",\n";
+    calFile << "    \"gain_imbalance\": " << iqCorrections[1].gainImbalance << ",\n";
+    calFile << "    \"phase_imbalance_rad\": " << iqCorrections[1].phaseImbalance << "\n";
+    calFile << "  }\n";
     calFile << "}\n";
     calFile.close();
   }

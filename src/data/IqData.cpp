@@ -24,6 +24,11 @@ uint32_t IqData::get_length()
   return data->size();
 }
 
+uint64_t IqData::get_overflow_count() const
+{
+  return overflowCount;
+}
+
 void IqData::lock()
 {
   mutex_lock.lock();
@@ -49,6 +54,12 @@ void IqData::push_back(std::complex<double> sample)
   {
     data->pop_front();
     data->push_back(sample);
+    overflowCount++;
+    if (overflowCount == 1 || (overflowCount % 1000000) == 0)
+    {
+      std::cerr << "[IqData] Buffer overflow: " << overflowCount
+                << " samples dropped (buffer full at " << n << " samples)." << std::endl;
+    }
   }
 }
 

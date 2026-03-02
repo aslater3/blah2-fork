@@ -22,6 +22,20 @@ Source::Source(std::string _type, uint32_t _fc, uint32_t _fs,
   saveIq = _saveIq;
 }
 
+bool Source::get_sync_metrics(int64_t &offsetSamples, double &snrDb) const
+{
+  offsetSamples = 0;
+  snrDb = 0.0;
+  return false;
+}
+
+bool Source::get_sample_drop_metrics(uint64_t &ch0, uint64_t &ch1) const
+{
+  ch0 = 0;
+  ch1 = 0;
+  return false;
+}
+
 std::string Source::open_file()
 {
   // get string of timestamp in YYYYmmdd-HHMMSS

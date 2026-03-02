@@ -19,6 +19,9 @@ private:
   /// @brief Maximum number of samples.
   uint32_t n;
 
+  /// @brief Counter for buffer overflow events.
+  uint64_t overflowCount = 0;
+
   /// @brief True if should not push to buffer (mutex).
   std::mutex mutex_lock;
 
@@ -53,6 +56,10 @@ public:
   /// @brief Getter for current data length.
   /// @return Number of samples currently in data.
   uint32_t get_length();
+
+  /// @brief Getter for cumulative buffer overflow count.
+  /// @return Number of samples dropped due to full buffer.
+  uint64_t get_overflow_count() const;
 
   /// @brief Locker for mutex.
   /// @return Void.

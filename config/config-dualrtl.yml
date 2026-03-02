@@ -1,10 +1,10 @@
 # Reference channel is index 0, surveillance channel is index 1. Keep arrays ordered accordingly.
 capture:
-  fs: 2000000
-  fc: 204640000
+  fs: 2400000
+  fc: 562000000
   device:
     type: "dual-rtl"
-    gain: [15.0, 15.0]        # gain[0] applies to reference channel (serial[0]); gain[1] to surveillance channel (serial[1])
+    gain: [7.0, 25.0]        # gain[0] applies to reference channel (lower - strong direct path); gain[1] to surveillance channel (higher - weak reflections)
     serial: ["00000001", "00000002"]  # serial[0] -> reference, serial[1] -> surveillance
     sync:
       enable: true
@@ -12,6 +12,7 @@ capture:
       search: 131072
       min_snr_db: 10.0
       calibration_fc: 0
+      recalibrate_interval: 10   # re-run sync calibration every N CPI cycles (0 = startup only)
   replay:
     state: false
     loop: true
@@ -19,18 +20,18 @@ capture:
 
 process:
   data:
-    cpi: 0.5
-    buffer: 1.5
+    cpi: 1.0
+    buffer: 3.0
     overlap: 0
   ambiguity:
     delayMin: -10
-    delayMax: 400
-    dopplerMin: -200
-    dopplerMax: 200
+    delayMax: 1200
+    dopplerMin: -500
+    dopplerMax: 500
   clutter:
     enable: true
     delayMin: -10
-    delayMax: 400
+    delayMax: 200       # clutter filter only needs to cover direct path + close multipath (not full range)
   detection:
     enable: true
     pfa: 0.00001
@@ -72,19 +73,19 @@ truth:
 
 location:
   rx:
-    latitude: -34.9286
-    longitude: 138.5999
+    latitude: 53.76355598527745
+    longitude: -2.7685548091440078
     altitude: 50
-    name: "Adelaide"
+    name: "Preston"
   tx:
-    latitude: -34.9810
-    longitude: 138.7081
-    altitude: 750
-    name: "Mount Lofty"
+    latitude: 53.6122
+    longitude: -2.5274
+    altitude: 456
+    name: "Winter Hill"
 
 save:
   iq: true
-  map: false
-  detection: false
-  timing: false
+  map: true
+  detection: true
+  timing: true
   path: "/blah2/save/"
