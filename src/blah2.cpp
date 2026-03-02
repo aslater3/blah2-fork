@@ -312,6 +312,12 @@ int main(int argc, char **argv)
           {
             if (!filter->process(x, y))
             {
+              // Drop this CPI cleanly so the next iteration starts fresh.
+              x->clear();
+              y->clear();
+              time.clear();
+              timing_name.clear();
+              timing_time.clear();
               continue;
             }
             timing_helper(timing_name, timing_time, time, "clutter_filter");
