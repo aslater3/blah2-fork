@@ -1,7 +1,9 @@
 /// @file IqData.h
 /// @class IqData
 /// @brief A class to store IQ data.
-/// @details Implements a FIFO queue to store IQ samples.
+/// @details Implements a contiguous circular buffer to store IQ samples.
+///          Replaces the previous deque-based implementation for better
+///          cache performance and reduced lock contention.
 /// @author 30hours
 
 #ifndef IQDATA_H
@@ -16,17 +18,26 @@
 class IqData
 {
 private:
-  /// @brief Maximum number of samples.
+  /// @brief Maximum number of samples (capacity).
   uint32_t n;
+
+  /// @brief Contiguous circular buffer storage.
+  std::vector<std::complex<double>> buffer;
+
+  /// @brief Read position (index of oldest sample).
+  uint32_t head;
+
+  /// @brief Write position (index of next write slot).
+  uint32_t tail;
+
+  /// @brief Current number of samples in the buffer.
+  uint32_t count;
 
   /// @brief Counter for buffer overflow events.
   uint64_t overflowCount = 0;
 
-  /// @brief True if should not push to buffer (mutex).
+  /// @brief Mutex for thread safety.
   std::mutex mutex_lock;
-
-  /// @brief Pointer to IQ data.
-  std::deque<std::complex<double>> *data;
 
   /// @brief Minimum value.
   double min;
@@ -45,7 +56,7 @@ private:
 
 public:
   /// @brief Constructor.
-  /// @param n Number of samples.
+  /// @param n Number of samples (capacity).
   /// @return The object.
   IqData(uint32_t n);
 
@@ -69,11 +80,15 @@ public:
   /// @return Void.
   void unlock();
 
-  /// @brief Getter for data.
-  /// @return IQ data.
+  /// @brief Getter for data as a deque (backward compatibility).
+  /// @details Constructs a deque from the circular buffer contents.
+  ///          Use sparingly — prefer direct access or read_front() in hot paths.
+  /// @return IQ data as deque.
   std::deque<std::complex<double>> get_data();
 
   /// @brief Push a sample to the queue.
+  /// @details When the buffer is full, the oldest sample is silently
+  ///          overwritten and the overflow counter is incremented.
   /// @param sample A single sample.
   /// @return Void.
   void push_back(std::complex<double> sample);
@@ -81,6 +96,14 @@ public:
   /// @brief Pop the front of the queue.
   /// @return Sample from the front of the queue.
   std::complex<double> pop_front();
+
+  /// @brief Bulk read and remove samples from the front.
+  /// @details Copies up to `requested` samples into `dest` and removes them
+  ///          from the buffer. Much faster than repeated pop_front() calls.
+  /// @param dest Destination array (must have room for `requested` elements).
+  /// @param requested Number of samples to read.
+  /// @return Actual number of samples read (may be less if buffer has fewer).
+  uint32_t read_front(std::complex<double> *dest, uint32_t requested);
 
   /// @brief Print to stdout (debug).
   /// @return Void.

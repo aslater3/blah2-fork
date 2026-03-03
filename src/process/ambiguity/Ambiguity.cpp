@@ -73,18 +73,23 @@ Ambiguity::Ambiguity(int32_t _delayMin, int32_t _delayMax,
   }
 
   // compute FFTW plans in constructor
+  // Use single-threaded plans for the small per-batch FFTs in the ambiguity
+  // processor.  Multi-threaded FFTW adds scheduling overhead that exceeds any
+  // parallelism benefit for transforms of this size (~4000 points).
+  fftw_plan_with_nthreads(1);
+
   dataXi.resize(nfft);
   dataYi.resize(nfft);
   dataZi.resize(nfft);
   dataDoppler.resize(nfft);
   fftXi = fftw_plan_dft_1d(nfft, reinterpret_cast<fftw_complex *>(dataXi.data()),
-                           reinterpret_cast<fftw_complex *>(dataXi.data()), FFTW_FORWARD, FFTW_ESTIMATE);
+                           reinterpret_cast<fftw_complex *>(dataXi.data()), FFTW_FORWARD, FFTW_MEASURE);
   fftYi = fftw_plan_dft_1d(nfft, reinterpret_cast<fftw_complex *>(dataYi.data()),
-                           reinterpret_cast<fftw_complex *>(dataYi.data()), FFTW_FORWARD, FFTW_ESTIMATE);
+                           reinterpret_cast<fftw_complex *>(dataYi.data()), FFTW_FORWARD, FFTW_MEASURE);
   fftZi = fftw_plan_dft_1d(nfft, reinterpret_cast<fftw_complex *>(dataZi.data()),
-                           reinterpret_cast<fftw_complex *>(dataZi.data()), FFTW_BACKWARD, FFTW_ESTIMATE);
+                           reinterpret_cast<fftw_complex *>(dataZi.data()), FFTW_BACKWARD, FFTW_MEASURE);
   fftDoppler = fftw_plan_dft_1d(nDopplerBins, reinterpret_cast<fftw_complex *>(dataDoppler.data()),
-                                reinterpret_cast<fftw_complex *>(dataDoppler.data()), FFTW_FORWARD, FFTW_ESTIMATE);
+                                reinterpret_cast<fftw_complex *>(dataDoppler.data()), FFTW_FORWARD, FFTW_MEASURE);
 
 }
 

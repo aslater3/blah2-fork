@@ -18,9 +18,12 @@ SpectrumAnalyser::SpectrumAnalyser(uint32_t _n, double _bandwidth)
   nfft = nSpectrum*decimation;
 
   // compute FFTW plans in constructor
+  // Use multithreaded FFTW for this large transform
+  fftw_plan_with_nthreads(4);
+
   dataX = new std::complex<double>[nfft];
   fftX = fftw_plan_dft_1d(nfft, reinterpret_cast<fftw_complex *>(dataX),
-                           reinterpret_cast<fftw_complex *>(dataX), FFTW_FORWARD, FFTW_ESTIMATE);
+                           reinterpret_cast<fftw_complex *>(dataX), FFTW_FORWARD, FFTW_MEASURE);
 }
 
 SpectrumAnalyser::~SpectrumAnalyser()

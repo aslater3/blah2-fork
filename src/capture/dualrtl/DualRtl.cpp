@@ -200,8 +200,10 @@ void DualRtl::process(IqData *buffer1, IqData *buffer2)
     uint32_t divergenceBreachCount = 0;
     // Async callback scheduling naturally creates short-lived count deltas.
     // Only trigger recalibration if divergence is both large and persistent.
-    constexpr int64_t kDivergenceTriggerSamples = 8 * 16384;
-    constexpr uint32_t kDivergenceBreachLimit = 20; // ~2 s at 100 ms polling
+    // Use conservative thresholds to avoid recalibration spirals when
+    // processing is slow (which causes apparent divergence via buffer overflow).
+    constexpr int64_t kDivergenceTriggerSamples = 32 * 16384;
+    constexpr uint32_t kDivergenceBreachLimit = 50; // ~5 s at 100 ms polling
     // Monitor for recalibration trigger or sample drops.
     // The async reads run indefinitely; we periodically check.
     while (true)

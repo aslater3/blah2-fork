@@ -19,6 +19,9 @@ WienerHopf::WienerHopf(int32_t _delayMin, int32_t _delayMax, uint32_t _nSamples)
   w = arma::cx_vec(nBins);
 
   // compute FFTW plans in constructor
+  // Use multithreaded FFTW for these large transforms (~1M points)
+  fftw_plan_with_nthreads(4);
+
   dataX = new std::complex<double>[nSamples];
   dataY = new std::complex<double>[nSamples];
   dataOutX = new std::complex<double>[nSamples];
@@ -29,19 +32,19 @@ WienerHopf::WienerHopf(int32_t _delayMin, int32_t _delayMax, uint32_t _nSamples)
   filtW = new std::complex<double>[nBins + nSamples + 1];
   filt = new std::complex<double>[nBins + nSamples + 1];
   fftX = fftw_plan_dft_1d(nSamples, reinterpret_cast<fftw_complex *>(dataX),
-                          reinterpret_cast<fftw_complex *>(dataOutX), FFTW_FORWARD, FFTW_ESTIMATE);
+                          reinterpret_cast<fftw_complex *>(dataOutX), FFTW_FORWARD, FFTW_MEASURE);
   fftY = fftw_plan_dft_1d(nSamples, reinterpret_cast<fftw_complex *>(dataY),
-                          reinterpret_cast<fftw_complex *>(dataOutY), FFTW_FORWARD, FFTW_ESTIMATE);
+                          reinterpret_cast<fftw_complex *>(dataOutY), FFTW_FORWARD, FFTW_MEASURE);
   fftA = fftw_plan_dft_1d(nSamples, reinterpret_cast<fftw_complex *>(dataA),
-                          reinterpret_cast<fftw_complex *>(dataA), FFTW_BACKWARD, FFTW_ESTIMATE);
+                          reinterpret_cast<fftw_complex *>(dataA), FFTW_BACKWARD, FFTW_MEASURE);
   fftB = fftw_plan_dft_1d(nSamples, reinterpret_cast<fftw_complex *>(dataB),
-                          reinterpret_cast<fftw_complex *>(dataB), FFTW_BACKWARD, FFTW_ESTIMATE);
+                          reinterpret_cast<fftw_complex *>(dataB), FFTW_BACKWARD, FFTW_MEASURE);
   fftFiltX = fftw_plan_dft_1d(nBins + nSamples + 1, reinterpret_cast<fftw_complex *>(filtX),
-                              reinterpret_cast<fftw_complex *>(filtX), FFTW_FORWARD, FFTW_ESTIMATE);
+                              reinterpret_cast<fftw_complex *>(filtX), FFTW_FORWARD, FFTW_MEASURE);
   fftFiltW = fftw_plan_dft_1d(nBins + nSamples + 1, reinterpret_cast<fftw_complex *>(filtW),
-                              reinterpret_cast<fftw_complex *>(filtW), FFTW_FORWARD, FFTW_ESTIMATE);
+                              reinterpret_cast<fftw_complex *>(filtW), FFTW_FORWARD, FFTW_MEASURE);
   fftFilt = fftw_plan_dft_1d(nBins + nSamples + 1, reinterpret_cast<fftw_complex *>(filt),
-                             reinterpret_cast<fftw_complex *>(filt), FFTW_BACKWARD, FFTW_ESTIMATE);
+                             reinterpret_cast<fftw_complex *>(filt), FFTW_BACKWARD, FFTW_MEASURE);
 }
 
 WienerHopf::~WienerHopf()

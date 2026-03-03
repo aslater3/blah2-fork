@@ -108,6 +108,9 @@ int main(int argc, char **argv)
   uint32_t nSamples = fs * tCpi;
   IqData *x = new IqData(nSamples);
   IqData *y = new IqData(nSamples);
+  // Pre-allocate bulk transfer buffers to avoid repeated allocation
+  std::vector<std::complex<double>> bulkX(nSamples);
+  std::vector<std::complex<double>> bulkY(nSamples);
   Map<std::complex<double>> *map;
   std::unique_ptr<Detection> detection;
   std::unique_ptr<Detection> detection1;
@@ -332,14 +335,17 @@ int main(int argc, char **argv)
           time.push_back(current_time_us());
           uint64_t overflowCount0 = buffer1->get_overflow_count();
           uint64_t overflowCount1 = buffer2->get_overflow_count();
-          // extract data from buffer
-          for (uint32_t i = 0; i < nSamples; i++)
-          {
-            x->push_back(buffer1->pop_front());
-            y->push_back(buffer2->pop_front());      
-          }
+          // extract data from buffer (bulk read for performance)
+          buffer1->read_front(bulkX.data(), nSamples);
+          buffer2->read_front(bulkY.data(), nSamples);
           buffer1->unlock();
           buffer2->unlock();
+          // Load into processing IqData objects
+          for (uint32_t i = 0; i < nSamples; i++)
+          {
+            x->push_back(bulkX[i]);
+            y->push_back(bulkY[i]);
+          }
           timing_helper(timing_name, timing_time, time, "extract_buffer");
 
           uint64_t timestampMs = time[0] / 1000;
