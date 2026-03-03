@@ -47,6 +47,7 @@ private:
   /// @brief Optional debug mode writing per-cell threshold/test-statistic values.
   bool debugEnabled;
   std::ofstream debugFile;
+  bool rowMetricsEnabled;
 
 public:
   /// @brief Constructor.
@@ -84,6 +85,9 @@ public:
 
   /// @brief Last per-row detection counts.
   const std::vector<uint32_t> &get_row_detection_count() const;
+
+  /// @brief Enable/disable per-row CFAR metric collection.
+  void set_row_metrics_enabled(bool enable);
 };
 
 #endif

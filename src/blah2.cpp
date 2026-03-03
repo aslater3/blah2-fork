@@ -306,6 +306,7 @@ int main(int argc, char **argv)
   {
     diagnostic = std::make_unique<Diagnostic>(savePath);
   }
+  cfarDetector1D->set_row_metrics_enabled(saveDiagnostic);
   uint64_t prevOverflow0 = 0;
   uint64_t prevOverflow1 = 0;
 

@@ -17,6 +17,7 @@ CfarDetector1D::CfarDetector1D(double _pfa, int8_t _nGuard, int8_t _nTrain, int8
   minDelay = _minDelay;
   minDoppler = _minDoppler;
   debugEnabled = false;
+  rowMetricsEnabled = false;
 }
 
 CfarDetector1D::~CfarDetector1D()
@@ -65,6 +66,11 @@ const std::vector<uint32_t> &CfarDetector1D::get_row_detection_count() const
   return rowDetectionCount;
 }
 
+void CfarDetector1D::set_row_metrics_enabled(bool enable)
+{
+  rowMetricsEnabled = enable;
+}
+
 std::unique_ptr<Detection> CfarDetector1D::process(Map<std::complex<double>> *x, uint64_t timestamp)
 { 
   int32_t nDelayBins = x->get_nCols();
@@ -78,10 +84,13 @@ std::unique_ptr<Detection> CfarDetector1D::process(Map<std::complex<double>> *x,
   std::vector<double> doppler;
   std::vector<double> snr;
 
-  rowDopplerHz.clear();
-  rowNoiseFloorDb.clear();
-  rowThresholdDb.clear();
-  rowDetectionCount.clear();
+  if (rowMetricsEnabled)
+  {
+    rowDopplerHz.clear();
+    rowNoiseFloorDb.clear();
+    rowThresholdDb.clear();
+    rowDetectionCount.clear();
+  }
 
   // loop over every cell
   for (int i = 0; i < nDopplerBins; i++)
@@ -98,7 +107,10 @@ std::unique_ptr<Detection> CfarDetector1D::process(Map<std::complex<double>> *x,
       double mag = std::abs(mapRow[j]);
       double power = mag * mag;
       mapRowSquare.push_back(power);
-       rowPowerSum += power;
+      if (rowMetricsEnabled)
+      {
+        rowPowerSum += power;
+      }
       // SNR in dB: 10*log10(|z|^2) - noisePower = 20*log10(|z|) - noisePower
       // Use consistent 10*log10(|z|) to match noisePower scale from set_metrics()
       mapRowSnr.push_back(10.0 * std::log10(mag + 1e-30) - x->noisePower);
@@ -154,8 +166,11 @@ std::unique_ptr<Detection> CfarDetector1D::process(Map<std::complex<double>> *x,
       trainNoise /= nCells;
       double threshold = alpha * trainNoise;
       double thresholdDb = 10.0 * std::log10(std::sqrt(threshold) + 1e-30) - x->noisePower;
-      thresholdSumDb += thresholdDb;
-      thresholdCount++;
+      if (rowMetricsEnabled)
+      {
+        thresholdSumDb += thresholdDb;
+        thresholdCount++;
+      }
       if (debugEnabled)
       {
         rowThresholdDebug[static_cast<size_t>(j)] = thresholdDb;
@@ -167,7 +182,10 @@ std::unique_ptr<Detection> CfarDetector1D::process(Map<std::complex<double>> *x,
         delay.push_back(j + x->delay[0]);
         doppler.push_back(x->doppler[i]);
         snr.push_back(mapRowSnr[j]);
-        rowDetections++;
+        if (rowMetricsEnabled)
+        {
+          rowDetections++;
+        }
         if (debugEnabled)
         {
           rowDetectionDebug[static_cast<size_t>(j)] = 1;
@@ -176,14 +194,18 @@ std::unique_ptr<Detection> CfarDetector1D::process(Map<std::complex<double>> *x,
       iTrain.clear();
     }
 
-    double rowNoiseDb = 10.0 * std::log10(std::sqrt(rowPowerSum / static_cast<double>(nDelayBins)) + 1e-30);
-    double rowThresholdMeanDb = (thresholdCount > 0)
-      ? (thresholdSumDb / static_cast<double>(thresholdCount))
-      : -300.0;
-    rowDopplerHz.push_back(x->doppler[i]);
-    rowNoiseFloorDb.push_back(rowNoiseDb);
-    rowThresholdDb.push_back(rowThresholdMeanDb);
-    rowDetectionCount.push_back(rowDetections);
+    double rowNoiseDb = 0.0;
+    if (rowMetricsEnabled)
+    {
+      rowNoiseDb = 10.0 * std::log10(std::sqrt(rowPowerSum / static_cast<double>(nDelayBins)) + 1e-30);
+      double rowThresholdMeanDb = (thresholdCount > 0)
+        ? (thresholdSumDb / static_cast<double>(thresholdCount))
+        : -300.0;
+      rowDopplerHz.push_back(x->doppler[i]);
+      rowNoiseFloorDb.push_back(rowNoiseDb);
+      rowThresholdDb.push_back(rowThresholdMeanDb);
+      rowDetectionCount.push_back(rowDetections);
+    }
 
     if (debugEnabled && debugFile.is_open())
     {
