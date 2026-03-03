@@ -351,9 +351,15 @@ int main(int argc, char **argv)
           spectrumAnalyser->process(x);
           timing_helper(timing_name, timing_time, time, "spectrum");
 
-          std::deque<std::complex<double>> xPreClutter = x->get_data();
-          std::deque<std::complex<double>> yPreClutter = y->get_data();
-          double clutterPowerBefore = zero_lag_power(xPreClutter, yPreClutter);
+          double clutterPowerBefore = 0.0;
+          std::deque<std::complex<double>> xPreClutter;
+          std::deque<std::complex<double>> yPreClutter;
+          if (diagnostic)
+          {
+            xPreClutter = x->get_data();
+            yPreClutter = y->get_data();
+            clutterPowerBefore = zero_lag_power(xPreClutter, yPreClutter);
+          }
           std::vector<double> zeroDopplerBeforeDb;
           
           // clutter filter
@@ -389,9 +395,13 @@ int main(int argc, char **argv)
             zeroDopplerBeforeDb = zero_doppler_row_db(mapBefore);
           }
 
-          std::deque<std::complex<double>> xPostClutter = x->get_data();
-          std::deque<std::complex<double>> yPostClutter = y->get_data();
-          double clutterPowerAfter = zero_lag_power(xPostClutter, yPostClutter);
+          double clutterPowerAfter = 0.0;
+          if (diagnostic)
+          {
+            std::deque<std::complex<double>> xPostClutter = x->get_data();
+            std::deque<std::complex<double>> yPostClutter = y->get_data();
+            clutterPowerAfter = zero_lag_power(xPostClutter, yPostClutter);
+          }
           
           // ambiguity process
           map = ambiguity->process(x, y);

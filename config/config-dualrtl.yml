@@ -25,7 +25,7 @@ process:
     overlap: 0
   ambiguity:
     delayMin: -10
-    delayMax: 1200
+    delayMax: 400
     dopplerMin: -500
     dopplerMax: 500
   clutter:

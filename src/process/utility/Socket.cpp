@@ -23,10 +23,11 @@ void Socket::sendData(const std::string& data) {
 
     for (std::size_t i = 0; i < (data.size() + MTU - 1) / MTU; ++i) {
         std::string subdata = data.substr(i * MTU, MTU);
-        socket.write_some(asio::buffer(subdata, subdata.size()), err);
+        asio::write(socket, asio::buffer(subdata, subdata.size()), err);
 
         if (err) {
             std::cerr << "Error sending data: " << err.message() << std::endl;
+            return;
         }
     }
 }
