@@ -96,9 +96,10 @@ std::unique_ptr<Detection> CfarDetector1D::process(Map<std::complex<double>> *x,
   // These arise from the periodic pilot structure in OFDM waveforms
   // (scattered pilots at 4-symbol period, continual pilots, etc.)
   // when captured with narrowband SDR (e.g. 2 MHz of 8 MHz signal).
+  // Include empirically observed offsets around ~274 Hz and ~464 Hz.
   static const double notchFreqs[] = {
-    195.3, 236.7, 270.6, 276.9, 390.6,
-    460.0, 541.1, 553.7, 781.2, 811.7, 830.6
+    195.3, 236.7, 270.6, 274.0, 276.9, 390.6,
+    460.0, 464.0, 541.1, 553.7, 781.2, 811.7, 830.6
   };
   static const double notchHalfWidth = 3.0; // Hz each side
   static const size_t nNotches = sizeof(notchFreqs) / sizeof(notchFreqs[0]);
@@ -117,8 +118,7 @@ std::unique_ptr<Detection> CfarDetector1D::process(Map<std::complex<double>> *x,
     bool isNotched = false;
     for (size_t n = 0; n < nNotches; n++)
     {
-      if (absDoppler > notchFreqs[n] - notchHalfWidth &&
-          absDoppler < notchFreqs[n] + notchHalfWidth)
+      if (std::abs(absDoppler - notchFreqs[n]) <= notchHalfWidth)
       {
         isNotched = true;
         break;
