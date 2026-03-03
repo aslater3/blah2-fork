@@ -27,12 +27,12 @@ var track = '';
 var timestamp = '';
 var timing = '';
 var iqdata = '';
-var data_map;
-var data_detection;
-var data_tracker;
-var data_timestamp;
-var data_timing;
-var data_iqdata;
+var data_map = '';
+var data_detection = '';
+var data_tracker = '';
+var data_timestamp = '';
+var data_timing = '';
+var data_iqdata = '';
 var capture = false;
 
 // api server
