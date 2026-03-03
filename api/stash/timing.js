@@ -29,6 +29,9 @@ function update_data(callback) {
           });
           res.on('end', () => {
             try {
+              if (!body_map || body_map.trim().length === 0) {
+                return;
+              }
               cpi = JSON.parse(body_map);
               keys = Object.keys(cpi);
               keys = keys.filter(item => item !== "uptime");

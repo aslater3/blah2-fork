@@ -51,7 +51,13 @@ function update_data() {
           });
           res.on('end', () => {
             try {
+              if (!body_map || body_map.trim().length === 0) {
+                return;
+              }
               maxhold = JSON.parse(body_map);
+              if (!maxhold.data || !Array.isArray(maxhold.data) || maxhold.data.length === 0) {
+                return;
+              }
               map.push(maxhold.data);
               if (map.length > nCpi) {
                 map.shift();

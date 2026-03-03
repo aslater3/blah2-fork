@@ -36,7 +36,13 @@ function update_data() {
           });
           res.on('end', () => {
             try {
+              if (!body_map || body_map.trim().length === 0) {
+                return;
+              }
               detection = JSON.parse(body_map);
+              if (!detection.delay || !detection.doppler || !detection.snr) {
+                return;
+              }
               map.push(detection);
               for (i = 0; i < map.length; i++)
               {

@@ -34,7 +34,13 @@ function update_data() {
           });
           res.on('end', () => {
             try {
+              if (!body_map || body_map.trim().length === 0) {
+                return;
+              }
               output = JSON.parse(body_map);
+              if (!output.spectrum || !output.frequency) {
+                return;
+              }
               // spectrum
               spectrum.push(output.spectrum);
               if (spectrum.length > nCpi) {
