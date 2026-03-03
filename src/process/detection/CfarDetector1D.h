@@ -48,6 +48,7 @@ private:
   bool debugEnabled;
   std::ofstream debugFile;
   bool rowMetricsEnabled;
+  bool pilotNotchEnabled;
 
 public:
   /// @brief Constructor.
@@ -88,6 +89,9 @@ public:
 
   /// @brief Enable/disable per-row CFAR metric collection.
   void set_row_metrics_enabled(bool enable);
+
+  /// @brief Enable/disable DVB-T/T2 pilot Doppler notch suppression.
+  void set_pilot_notch_enabled(bool enable);
 };
 
 #endif

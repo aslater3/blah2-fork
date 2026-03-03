@@ -220,6 +220,13 @@ int main(int argc, char **argv)
   tree["process"]["detection"]["minDelay"] >> minDelay;
   tree["process"]["detection"]["minDoppler"] >> minDoppler;
   CfarDetector1D *cfarDetector1D = new CfarDetector1D(pfa, nGuard, nTrain, minDelay, minDoppler);
+  bool pilotNotchEnable = true;
+  auto pilotNotchNode = tree["process"]["detection"].find_child(c4::to_csubstr("pilotNotchEnable"));
+  if (pilotNotchNode.valid())
+  {
+    pilotNotchNode >> pilotNotchEnable;
+  }
+  cfarDetector1D->set_pilot_notch_enabled(pilotNotchEnable);
   Interpolate *interpolate = new Interpolate(true, true);
   bool cfarDebug = false;
   auto cfarDebugNode = tree["process"]["detection"].find_child(c4::to_csubstr("cfarDebug"));

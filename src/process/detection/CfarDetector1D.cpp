@@ -18,6 +18,7 @@ CfarDetector1D::CfarDetector1D(double _pfa, int8_t _nGuard, int8_t _nTrain, int8
   minDoppler = _minDoppler;
   debugEnabled = false;
   rowMetricsEnabled = false;
+  pilotNotchEnabled = true;
 }
 
 CfarDetector1D::~CfarDetector1D()
@@ -71,6 +72,11 @@ void CfarDetector1D::set_row_metrics_enabled(bool enable)
   rowMetricsEnabled = enable;
 }
 
+void CfarDetector1D::set_pilot_notch_enabled(bool enable)
+{
+  pilotNotchEnabled = enable;
+}
+
 std::unique_ptr<Detection> CfarDetector1D::process(Map<std::complex<double>> *x, uint64_t timestamp)
 { 
   int32_t nDelayBins = x->get_nCols();
@@ -116,12 +122,15 @@ std::unique_ptr<Detection> CfarDetector1D::process(Map<std::complex<double>> *x,
     // skip known DVB-T/T2 pilot ambiguity frequencies
     double absDoppler = std::abs(x->doppler[i]);
     bool isNotched = false;
-    for (size_t n = 0; n < nNotches; n++)
+    if (pilotNotchEnabled)
     {
-      if (std::abs(absDoppler - notchFreqs[n]) <= notchHalfWidth)
+      for (size_t n = 0; n < nNotches; n++)
       {
-        isNotched = true;
-        break;
+        if (std::abs(absDoppler - notchFreqs[n]) <= notchHalfWidth)
+        {
+          isNotched = true;
+          break;
+        }
       }
     }
     if (isNotched)

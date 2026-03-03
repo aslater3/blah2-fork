@@ -39,6 +39,7 @@ process:
     nTrain: 16
     minDelay: 5
     minDoppler: 15
+    pilotNotchEnable: true
     nCentroid: 6
   tracker:
     enable: true
