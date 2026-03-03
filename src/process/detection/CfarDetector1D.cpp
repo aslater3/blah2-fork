@@ -92,6 +92,17 @@ std::unique_ptr<Detection> CfarDetector1D::process(Map<std::complex<double>> *x,
     rowDetectionCount.clear();
   }
 
+  // DVB-T/T2 pilot ambiguity notch frequencies (Hz).
+  // These arise from the periodic pilot structure in OFDM waveforms
+  // (scattered pilots at 4-symbol period, continual pilots, etc.)
+  // when captured with narrowband SDR (e.g. 2 MHz of 8 MHz signal).
+  static const double notchFreqs[] = {
+    195.3, 236.7, 270.6, 276.9, 390.6,
+    460.0, 541.1, 553.7, 781.2, 811.7, 830.6
+  };
+  static const double notchHalfWidth = 3.0; // Hz each side
+  static const size_t nNotches = sizeof(notchFreqs) / sizeof(notchFreqs[0]);
+
   // loop over every cell
   for (int i = 0; i < nDopplerBins; i++)
   { 
@@ -99,7 +110,24 @@ std::unique_ptr<Detection> CfarDetector1D::process(Map<std::complex<double>> *x,
     if (std::abs(x->doppler[i]) < minDoppler)
     {
       continue;
-    } 
+    }
+
+    // skip known DVB-T/T2 pilot ambiguity frequencies
+    double absDoppler = std::abs(x->doppler[i]);
+    bool isNotched = false;
+    for (size_t n = 0; n < nNotches; n++)
+    {
+      if (absDoppler > notchFreqs[n] - notchHalfWidth &&
+          absDoppler < notchFreqs[n] + notchHalfWidth)
+      {
+        isNotched = true;
+        break;
+      }
+    }
+    if (isNotched)
+    {
+      continue;
+    }
     mapRow = x->get_row(i);
     double rowPowerSum = 0.0;
     for (int j = 0; j < nDelayBins; j++)
