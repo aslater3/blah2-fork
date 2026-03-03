@@ -98,7 +98,7 @@ std::unique_ptr<Detection> CfarDetector1D::process(Map<std::complex<double>> *x,
   // when captured with narrowband SDR (e.g. 2 MHz of 8 MHz signal).
   // Include empirically observed offsets around ~274 Hz and ~464 Hz.
   static const double notchFreqs[] = {
-    195.3, 236.7, 270.6, 274.0, 276.9, 390.6,
+    76.0, 195.3, 236.7, 270.6, 274.0, 276.9, 390.6,
     460.0, 464.0, 541.1, 553.7, 781.2, 811.7, 830.6
   };
   static const double notchHalfWidth = 3.0; // Hz each side
