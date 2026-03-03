@@ -134,12 +134,61 @@ int main(int argc, char **argv)
   tree["network"]["ports"]["timing"] >> port_timing;
   tree["network"]["ports"]["iqdata"] >> port_iqdata;
   tree["network"]["ip"] >> ip;
-  Socket socket_map(ip, port_map);
-  Socket socket_detection(ip, port_detection);
-  Socket socket_track(ip, port_track);
-  Socket socket_timestamp(ip, port_timestamp);
-  Socket socket_timing(ip, port_timing);
-  Socket socket_iqdata(ip, port_iqdata);
+
+  bool streamMap = true;
+  bool streamDetection = true;
+  bool streamTrack = true;
+  bool streamTimestamp = true;
+  bool streamTiming = true;
+  bool streamIqData = true;
+  auto streamNode = tree["network"].find_child(c4::to_csubstr("stream"));
+  if (streamNode.valid())
+  {
+    auto mapNode = streamNode.find_child(c4::to_csubstr("map"));
+    if (mapNode.valid()) mapNode >> streamMap;
+    auto detectionNode = streamNode.find_child(c4::to_csubstr("detection"));
+    if (detectionNode.valid()) detectionNode >> streamDetection;
+    auto trackNode = streamNode.find_child(c4::to_csubstr("track"));
+    if (trackNode.valid()) trackNode >> streamTrack;
+    auto timestampNode = streamNode.find_child(c4::to_csubstr("timestamp"));
+    if (timestampNode.valid()) timestampNode >> streamTimestamp;
+    auto timingNode = streamNode.find_child(c4::to_csubstr("timing"));
+    if (timingNode.valid()) timingNode >> streamTiming;
+    auto iqNode = streamNode.find_child(c4::to_csubstr("iqdata"));
+    if (iqNode.valid()) iqNode >> streamIqData;
+  }
+
+  std::unique_ptr<Socket> socket_map;
+  std::unique_ptr<Socket> socket_detection;
+  std::unique_ptr<Socket> socket_track;
+  std::unique_ptr<Socket> socket_timestamp;
+  std::unique_ptr<Socket> socket_timing;
+  std::unique_ptr<Socket> socket_iqdata;
+
+  if (streamMap)
+  {
+    socket_map = std::make_unique<Socket>(ip, port_map);
+  }
+  if (streamDetection)
+  {
+    socket_detection = std::make_unique<Socket>(ip, port_detection);
+  }
+  if (streamTrack)
+  {
+    socket_track = std::make_unique<Socket>(ip, port_track);
+  }
+  if (streamTimestamp)
+  {
+    socket_timestamp = std::make_unique<Socket>(ip, port_timestamp);
+  }
+  if (streamTiming)
+  {
+    socket_timing = std::make_unique<Socket>(ip, port_timing);
+  }
+  if (streamIqData)
+  {
+    socket_iqdata = std::make_unique<Socket>(ip, port_iqdata);
+  }
 
   // setup process ambiguity
   int32_t delayMin, delayMax;
@@ -417,24 +466,36 @@ int main(int argc, char **argv)
           }
 
           // output IqData meta data
-          jsonIqData = x->to_json(timestampMs);
-          socket_iqdata.sendData(jsonIqData);
+          if (streamIqData && socket_iqdata)
+          {
+            jsonIqData = x->to_json(timestampMs);
+            socket_iqdata->sendData(jsonIqData);
+          }
 
           // output map data
-          mapJson = map->to_json(timestampMs);
-          mapJson = map->delay_bin_to_km(mapJson, fs);
+          if (streamMap || saveMap)
+          {
+            mapJson = map->to_json(timestampMs);
+            mapJson = map->delay_bin_to_km(mapJson, fs);
+          }
           if (saveMap)
           {
             map->save(mapJson, saveMapPath);
           }
-          socket_map.sendData(mapJson);
+          if (streamMap && socket_map)
+          {
+            socket_map->sendData(mapJson);
+          }
 
           // output detection data
-          if (isDetection)
+          if (isDetection && (streamDetection || saveDetection))
           {
             detectionJson = detection->to_json(timestampMs);
             detectionJson = detection->delay_bin_to_km(detectionJson, fs);
-            socket_detection.sendData(detectionJson);
+          }
+          if (isDetection && streamDetection && socket_detection)
+          {
+            socket_detection->sendData(detectionJson);
           }
           if (saveDetection && isDetection)
           {
@@ -442,10 +503,10 @@ int main(int argc, char **argv)
           }
 
           // output tracker data
-          if (isTracker)
+          if (isTracker && streamTrack && socket_track)
           {
             jsonTracker = track->to_json(timestampMs);
-            socket_track.sendData(jsonTracker);
+            socket_track->sendData(jsonTracker);
           }
 
           // output radar data timer
@@ -461,7 +522,10 @@ int main(int argc, char **argv)
           // output timing data
           timing->update(timestampMs, timing_time, timing_name);
           jsonTiming = timing->to_json();
-          socket_timing.sendData(jsonTiming);
+          if (streamTiming && socket_timing)
+          {
+            socket_timing->sendData(jsonTiming);
+          }
           if (saveTiming)
           {
             timing->save(jsonTiming, saveTimingPath);
@@ -471,7 +535,10 @@ int main(int argc, char **argv)
 
           // output CPI timestamp for updating data
           std::string t0_string = std::to_string(timestampMs);
-          socket_timestamp.sendData(t0_string);
+          if (streamTimestamp && socket_timestamp)
+          {
+            socket_timestamp->sendData(t0_string);
+          }
           time.clear();
 
         }

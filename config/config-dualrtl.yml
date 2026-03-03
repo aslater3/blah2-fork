@@ -1,11 +1,11 @@
 # Reference channel is index 0, surveillance channel is index 1. Keep arrays ordered accordingly.
 capture:
-  fs: 2400000
-  fc: 562000000
+  fs: 2000000
+  fc: 576000000
   device:
     type: "dual-rtl"
     gain: [7.0, 25.0]        # gain[0] applies to reference channel (lower - strong direct path); gain[1] to surveillance channel (higher - weak reflections)
-    serial: ["00000001", "00000002"]  # serial[0] -> reference, serial[1] -> surveillance
+    serial: ["REF", "SURV"]  # serial[0] -> reference, serial[1] -> surveillance
     sync:
       enable: true
       seconds: 0.25
@@ -20,8 +20,8 @@ capture:
 
 process:
   data:
-    cpi: 1.0
-    buffer: 3.0
+    cpi: 0.5
+    buffer: 8.0
     overlap: 0
   ambiguity:
     delayMin: -10
@@ -60,6 +60,13 @@ network:
     timing: 4001
     iqdata: 4002
     config: 4003
+  stream:
+    map: false
+    detection: true
+    track: true
+    timestamp: true
+    timing: false
+    iqdata: false
 
 truth:
   adsb:
