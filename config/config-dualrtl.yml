@@ -61,7 +61,7 @@ network:
     iqdata: 4002
     config: 4003
   stream:
-    map: false
+    map: true
     detection: true
     track: true
     timestamp: true
