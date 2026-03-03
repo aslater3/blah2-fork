@@ -135,26 +135,10 @@ Map<std::complex<double>> *Ambiguity::process(IqData *x, IqData *y)
     fftw_execute(fftXi);
     fftw_execute(fftYi);
 
-    // Reciprocal filter (per-frequency-bin whitening):
-    // Normalise cross-spectrum by reference power spectrum to remove
-    // DVB-T OFDM pilot structure (scattered/continual pilots create
-    // periodic amplitude+phase modulation that produces Doppler spurs).
-    // Z[k] = Y[k] * conj(X[k]) / (|X[k]|^2 + eps)
-    // This is the standard mismatched filter for OFDM passive radar.
-    
-    // Compute regularisation parameter: fraction of average |X|^2
-    double avgRefPower = 0.0;
+    // compute cross-correlation via cross-spectrum (matched filter)
     for (uint32_t j = 0; j < nfft; j++)
     {
-      avgRefPower += std::norm(dataXi[j]);
-    }
-    avgRefPower /= static_cast<double>(nfft);
-    double epsilon = 0.01 * avgRefPower;  // -20 dB regularisation floor
-
-    for (uint32_t j = 0; j < nfft; j++)
-    {
-      double refPower = std::norm(dataXi[j]);
-      dataZi[j] = (dataYi[j] * std::conj(dataXi[j])) / (refPower + epsilon);
+      dataZi[j] = (dataYi[j] * std::conj(dataXi[j])) / (double)nfft;
     }
 
     fftw_execute(fftZi);
