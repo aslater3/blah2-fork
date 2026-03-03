@@ -26,8 +26,8 @@ process:
   ambiguity:
     delayMin: -10
     delayMax: 400
-    dopplerMin: -500
-    dopplerMax: 500
+    dopplerMin: -503
+    dopplerMax: 503
   clutter:
     enable: true
     delayMin: -10
@@ -36,7 +36,7 @@ process:
     enable: true
     pfa: 0.00001
     nGuard: 2
-    nTrain: 6
+    nTrain: 16
     minDelay: 5
     minDoppler: 15
     nCentroid: 6
