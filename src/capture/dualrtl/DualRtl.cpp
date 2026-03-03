@@ -306,6 +306,15 @@ void DualRtl::process(IqData *buffer1, IqData *buffer2)
         }
       }
 
+      // Clear application-level buffers to prevent stale pre-calibration
+      // samples from contaminating the first CPIs after recalibration.
+      buffer1->lock();
+      buffer1->clear();
+      buffer1->unlock();
+      buffer2->lock();
+      buffer2->clear();
+      buffer2->unlock();
+
       // Reset sample counters
       channelState[0].totalSamples.store(0, std::memory_order_relaxed);
       channelState[1].totalSamples.store(0, std::memory_order_relaxed);

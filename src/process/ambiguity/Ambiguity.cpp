@@ -117,10 +117,13 @@ Map<std::complex<double>> *Ambiguity::process(IqData *x, IqData *y)
   nSamples = nDopplerBins * nCorr;
   for (uint16_t i = 0; i < nDopplerBins; i++)
   {
+    double refBatchPower = 0.0;
     for (uint16_t j = 0; j < nCorr; j++)
     {
       Complex xSample = x->pop_front();
       Complex ySample = y->pop_front();
+      // accumulate reference power before windowing for batch normalisation
+      refBatchPower += std::norm(xSample);
       // apply Hanning window to reduce spectral leakage sidelobes
       dataXi[j] = xSample * hanningWindow[j];
       dataYi[j] = ySample * hanningWindow[j];
@@ -142,6 +145,18 @@ Map<std::complex<double>> *Ambiguity::process(IqData *x, IqData *y)
     }
 
     fftw_execute(fftZi);
+
+    // Per-batch power normalisation: divide by reference power to suppress
+    // DVB-T scattered pilot amplitude modulation artifacts (spurs at ~270 Hz
+    // and harmonics caused by the 4-symbol pilot cycle).
+    if (refBatchPower > 0.0)
+    {
+      double normFactor = 1.0 / refBatchPower;
+      for (uint32_t j = 0; j < nfft; j++)
+      {
+        dataZi[j] *= normFactor;
+      }
+    }
 
     // extract center of corr
     for (uint16_t j = 0; j < nDelayBins; j++)
