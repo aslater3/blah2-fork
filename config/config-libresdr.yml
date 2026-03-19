@@ -7,9 +7,10 @@ capture:
   device:
     type: "LibreSDR"
     gain: [30.0, 40.0]            # gain[0] = reference (lower), gain[1] = surveillance (higher)
-    antenna: ["LNAW", "LNAW"]    # per-channel antenna port
+    antenna: ["A_BALANCED", "A_BALANCED"]  # per-channel antenna port
     bandwidth: 0                   # analog filter bandwidth in Hz (0 = auto)
-    device_args: "driver=lime"    # SoapySDR device argument string
+    device_args: "driver=plutosdr" # SoapySDR device argument string
+    # For network (PlutoSDR IP): device_args: "driver=plutosdr,hostname=192.168.2.1"
   replay:
     state: false
     loop: true

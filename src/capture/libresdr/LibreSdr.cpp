@@ -13,6 +13,7 @@
 #include <SoapySDR/Formats.hpp>
 #include <SoapySDR/Types.hpp>
 #include <SoapySDR/Errors.hpp>
+#include <SoapySDR/Version.hpp>
 
 // constructor
 LibreSdr::LibreSdr(std::string _type, uint32_t _fc, uint32_t _fs,
@@ -38,12 +39,55 @@ LibreSdr::~LibreSdr()
 
 void LibreSdr::start()
 {
+  std::cout << "LibreSDR: SoapySDR version " << SoapySDR::getLibVersion() << std::endl;
+  std::cout << "LibreSDR: device_args = \"" << deviceArgs << "\"" << std::endl;
+
+  // Enumerate available devices first for diagnostics
+  SoapySDR::Kwargs findArgs = SoapySDR::KwargsFromString(deviceArgs);
+  SoapySDR::KwargsList results = SoapySDR::Device::enumerate(findArgs);
+  std::cout << "LibreSDR: Found " << results.size() << " device(s) matching args." << std::endl;
+  for (size_t i = 0; i < results.size(); i++)
+  {
+    std::cout << "  Device " << i << ": " << SoapySDR::KwargsToString(results[i]) << std::endl;
+  }
+
+  if (results.empty())
+  {
+    std::cerr << "Error: LibreSDR - No SoapySDR devices found for args: \""
+              << deviceArgs << "\"" << std::endl;
+    std::cerr << "  Check that the LibreSDR is connected (USB) or reachable (network)." << std::endl;
+    std::cerr << "  For network: device_args: \"driver=remote,remote=<IP>\"" << std::endl;
+    return;
+  }
+
   // Make the SoapySDR device
-  SoapySDR::Kwargs args = SoapySDR::KwargsFromString(deviceArgs);
-  soapyDevice = SoapySDR::Device::make(args);
+  try
+  {
+    soapyDevice = SoapySDR::Device::make(findArgs);
+  }
+  catch (const std::exception &e)
+  {
+    std::cerr << "Error: LibreSDR - SoapySDR::Device::make() failed: "
+              << e.what() << std::endl;
+    soapyDevice = nullptr;
+    return;
+  }
+
   if (soapyDevice == nullptr)
   {
-    std::cerr << "Error: LibreSDR - SoapySDR::Device::make() failed." << std::endl;
+    std::cerr << "Error: LibreSDR - SoapySDR::Device::make() returned null." << std::endl;
+    return;
+  }
+
+  // Verify device has at least 2 RX channels
+  size_t numRxChannels = soapyDevice->getNumChannels(SOAPY_SDR_RX);
+  std::cout << "LibreSDR: Device has " << numRxChannels << " RX channel(s)." << std::endl;
+  if (numRxChannels < 2)
+  {
+    std::cerr << "Error: LibreSDR - Device has " << numRxChannels
+              << " RX channel(s), need at least 2." << std::endl;
+    SoapySDR::Device::unmake(soapyDevice);
+    soapyDevice = nullptr;
     return;
   }
 
