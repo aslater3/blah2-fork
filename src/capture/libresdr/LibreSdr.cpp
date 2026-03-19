@@ -8,27 +8,28 @@
 #include <fstream>
 #include <thread>
 #include <chrono>
+#include <stdexcept>
 
-#include <SoapySDR/Device.hpp>
-#include <SoapySDR/Formats.hpp>
-#include <SoapySDR/Types.hpp>
-#include <SoapySDR/Errors.hpp>
-#include <SoapySDR/Version.hpp>
+#include <iio.h>
 
 // constructor
 LibreSdr::LibreSdr(std::string _type, uint32_t _fc, uint32_t _fs,
                    std::string _path, bool *_saveIq,
                    std::vector<double> _gain,
-                   std::vector<std::string> _antenna,
                    double _bandwidth,
-                   std::string _deviceArgs)
+                   std::string _uri,
+                   size_t _bufferSize)
     : Source(_type, _fc, _fs, _path, _saveIq),
       gain(std::move(_gain)),
-      antenna(std::move(_antenna)),
       bandwidth(_bandwidth),
-      deviceArgs(std::move(_deviceArgs)),
-      soapyDevice(nullptr),
-      rxStream(nullptr)
+      uri(std::move(_uri)),
+      bufferSize(_bufferSize),
+      ctx(nullptr),
+      phyDev(nullptr),
+      rxDev(nullptr),
+      rx0_i(nullptr), rx0_q(nullptr),
+      rx1_i(nullptr), rx1_q(nullptr),
+      rxBuf(nullptr)
 {
 }
 
@@ -37,216 +38,260 @@ LibreSdr::~LibreSdr()
   stop();
 }
 
+void LibreSdr::configure_rx_channel(int phyChan, double gainDb)
+{
+  // PHY channel names: "voltage0" for RX1, "voltage1" for RX2
+  std::string chanName = "voltage" + std::to_string(phyChan);
+  struct iio_channel *phyCh = iio_device_find_channel(phyDev, chanName.c_str(), false);
+  if (!phyCh)
+  {
+    std::cerr << "Error: LibreSDR - cannot find PHY channel " << chanName << std::endl;
+    return;
+  }
+
+  // Set gain mode to manual
+  iio_channel_attr_write(phyCh, "gain_control_mode", "manual");
+
+  // Set hardware gain
+  iio_channel_attr_write_double(phyCh, "hardwaregain", gainDb);
+
+  // Set RF bandwidth if specified
+  if (bandwidth > 0)
+  {
+    iio_channel_attr_write_longlong(phyCh, "rf_bandwidth", static_cast<long long>(bandwidth));
+  }
+
+  // Set sampling frequency (on channel 0 it applies to both)
+  if (phyChan == 0)
+  {
+    iio_channel_attr_write_longlong(phyCh, "sampling_frequency", static_cast<long long>(fs));
+  }
+
+  std::cout << "LibreSDR: Configured PHY " << chanName
+            << " gain=" << gainDb << " dB" << std::endl;
+}
+
 void LibreSdr::start()
 {
-  std::cout << "LibreSDR: SoapySDR version " << SoapySDR::getLibVersion() << std::endl;
-  std::cout << "LibreSDR: device_args = \"" << deviceArgs << "\"" << std::endl;
+  std::cout << "LibreSDR: Connecting via URI: \"" << uri << "\"" << std::endl;
 
-  // Enumerate available devices first for diagnostics
-  SoapySDR::Kwargs findArgs = SoapySDR::KwargsFromString(deviceArgs);
-  SoapySDR::KwargsList results = SoapySDR::Device::enumerate(findArgs);
-  std::cout << "LibreSDR: Found " << results.size() << " device(s) matching args." << std::endl;
-  for (size_t i = 0; i < results.size(); i++)
+  // Create IIO context
+  if (uri.empty() || uri == "usb:" || uri == "usb")
   {
-    std::cout << "  Device " << i << ": " << SoapySDR::KwargsToString(results[i]) << std::endl;
+    // Scan for USB devices
+    ctx = iio_create_default_context();
+    if (!ctx)
+    {
+      ctx = iio_create_context_from_uri("usb:");
+    }
+  }
+  else
+  {
+    ctx = iio_create_context_from_uri(uri.c_str());
   }
 
-  if (results.empty())
+  if (!ctx)
   {
-    std::cerr << "Error: LibreSDR - No SoapySDR devices found for args: \""
-              << deviceArgs << "\"" << std::endl;
-    std::cerr << "  Check that the LibreSDR is connected (USB) or reachable (network)." << std::endl;
-    std::cerr << "  For network: device_args: \"driver=remote,remote=<IP>\"" << std::endl;
+    std::cerr << "Error: LibreSDR - Failed to create IIO context for URI: \""
+              << uri << "\"" << std::endl;
+    std::cerr << "  For USB: uri: \"usb:\"" << std::endl;
+    std::cerr << "  For network: uri: \"ip:192.168.2.1\"" << std::endl;
     return;
   }
 
-  // Make the SoapySDR device
-  try
+  unsigned int devCount = iio_context_get_devices_count(ctx);
+  std::cout << "LibreSDR: IIO context has " << devCount << " device(s)." << std::endl;
+  for (unsigned int i = 0; i < devCount; i++)
   {
-    soapyDevice = SoapySDR::Device::make(findArgs);
+    const struct iio_device *dev = iio_context_get_device(ctx, i);
+    const char *name = iio_device_get_name(dev);
+    std::cout << "  Device " << i << ": " << (name ? name : "(unnamed)") << std::endl;
   }
-  catch (const std::exception &e)
+
+  // Find the AD9363/AD9361 PHY device
+  phyDev = iio_context_find_device(ctx, "ad9361-phy");
+  if (!phyDev)
   {
-    std::cerr << "Error: LibreSDR - SoapySDR::Device::make() failed: "
-              << e.what() << std::endl;
-    soapyDevice = nullptr;
+    std::cerr << "Error: LibreSDR - Cannot find ad9361-phy device." << std::endl;
+    iio_context_destroy(ctx);
+    ctx = nullptr;
     return;
   }
 
-  if (soapyDevice == nullptr)
+  // Enable dual RX channel mode via PHY attribute if available
+  // The LibreSDR with AD9363 needs to be in 2R2T mode
+  struct iio_channel *phyCh0 = iio_device_find_channel(phyDev, "voltage0", false);
+  if (phyCh0)
   {
-    std::cerr << "Error: LibreSDR - SoapySDR::Device::make() returned null." << std::endl;
-    return;
+    // Check if there's 2 RX channels available in the streaming device
+    // First set the RX LO frequency (applies to both channels)
+    struct iio_channel *rxLo = iio_device_find_channel(phyDev, "altvoltage0", true);
+    if (rxLo)
+    {
+      iio_channel_attr_write_longlong(rxLo, "frequency", static_cast<long long>(fc));
+      std::cout << "LibreSDR: Set RX LO frequency to " << fc << " Hz" << std::endl;
+    }
+    else
+    {
+      std::cerr << "Warning: LibreSDR - Cannot find RX LO channel." << std::endl;
+    }
   }
 
-  // Verify device has at least 2 RX channels
-  size_t numRxChannels = soapyDevice->getNumChannels(SOAPY_SDR_RX);
-  std::cout << "LibreSDR: Device has " << numRxChannels << " RX channel(s)." << std::endl;
-  if (numRxChannels < 2)
-  {
-    std::cerr << "Error: LibreSDR - Device has " << numRxChannels
-              << " RX channel(s), need at least 2." << std::endl;
-    SoapySDR::Device::unmake(soapyDevice);
-    soapyDevice = nullptr;
-    return;
-  }
-
-  // Configure RX channel 0 (reference)
-  soapyDevice->setSampleRate(SOAPY_SDR_RX, 0, static_cast<double>(fs));
-  soapyDevice->setFrequency(SOAPY_SDR_RX, 0, static_cast<double>(fc));
+  // Configure PHY channels
   if (gain.size() > 0)
   {
-    soapyDevice->setGain(SOAPY_SDR_RX, 0, gain[0]);
+    configure_rx_channel(0, gain[0]);
   }
-  if (antenna.size() > 0 && !antenna[0].empty())
-  {
-    soapyDevice->setAntenna(SOAPY_SDR_RX, 0, antenna[0]);
-  }
-  if (bandwidth > 0)
-  {
-    soapyDevice->setBandwidth(SOAPY_SDR_RX, 0, bandwidth);
-  }
-
-  // Configure RX channel 1 (surveillance)
-  soapyDevice->setSampleRate(SOAPY_SDR_RX, 1, static_cast<double>(fs));
-  soapyDevice->setFrequency(SOAPY_SDR_RX, 1, static_cast<double>(fc));
   if (gain.size() > 1)
   {
-    soapyDevice->setGain(SOAPY_SDR_RX, 1, gain[1]);
-  }
-  if (antenna.size() > 1 && !antenna[1].empty())
-  {
-    soapyDevice->setAntenna(SOAPY_SDR_RX, 1, antenna[1]);
-  }
-  if (bandwidth > 0)
-  {
-    soapyDevice->setBandwidth(SOAPY_SDR_RX, 1, bandwidth);
+    configure_rx_channel(1, gain[1]);
   }
 
-  // Print actual configuration
-  std::cout << "LibreSDR RX0 rate: "
-            << soapyDevice->getSampleRate(SOAPY_SDR_RX, 0) << " Hz" << std::endl;
-  std::cout << "LibreSDR RX0 freq: "
-            << soapyDevice->getFrequency(SOAPY_SDR_RX, 0) << " Hz" << std::endl;
-  std::cout << "LibreSDR RX0 gain: "
-            << soapyDevice->getGain(SOAPY_SDR_RX, 0) << " dB" << std::endl;
-  std::cout << "LibreSDR RX0 antenna: "
-            << soapyDevice->getAntenna(SOAPY_SDR_RX, 0) << std::endl;
-  std::cout << "LibreSDR RX1 rate: "
-            << soapyDevice->getSampleRate(SOAPY_SDR_RX, 1) << " Hz" << std::endl;
-  std::cout << "LibreSDR RX1 freq: "
-            << soapyDevice->getFrequency(SOAPY_SDR_RX, 1) << " Hz" << std::endl;
-  std::cout << "LibreSDR RX1 gain: "
-            << soapyDevice->getGain(SOAPY_SDR_RX, 1) << " dB" << std::endl;
-  std::cout << "LibreSDR RX1 antenna: "
-            << soapyDevice->getAntenna(SOAPY_SDR_RX, 1) << std::endl;
-
-  // Setup a dual-channel RX stream (CF32 format)
-  std::vector<size_t> channels = {0, 1};
-  rxStream = soapyDevice->setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32, channels);
-  if (rxStream == nullptr)
+  // Find the RX streaming device
+  rxDev = iio_context_find_device(ctx, "cf-ad9361-lpc");
+  if (!rxDev)
   {
-    std::cerr << "Error: LibreSDR - setupStream() failed." << std::endl;
+    std::cerr << "Error: LibreSDR - Cannot find cf-ad9361-lpc streaming device." << std::endl;
+    std::cerr << "  The LibreSDR firmware may need to be configured for 2R2T mode." << std::endl;
+    iio_context_destroy(ctx);
+    ctx = nullptr;
     return;
   }
 
-  // Activate the stream
-  int ret = soapyDevice->activateStream(rxStream);
-  if (ret != 0)
+  // Find RX streaming channels
+  // Channel naming: voltage0 (RX1 I), voltage1 (RX1 Q), voltage2 (RX2 I), voltage3 (RX2 Q)
+  rx0_i = iio_device_find_channel(rxDev, "voltage0", false);
+  rx0_q = iio_device_find_channel(rxDev, "voltage1", false);
+  rx1_i = iio_device_find_channel(rxDev, "voltage2", false);
+  rx1_q = iio_device_find_channel(rxDev, "voltage3", false);
+
+  if (!rx0_i || !rx0_q)
   {
-    std::cerr << "Error: LibreSDR - activateStream() returned "
-              << SoapySDR::errToStr(ret) << std::endl;
+    std::cerr << "Error: LibreSDR - Cannot find RX0 I/Q channels (voltage0/voltage1)." << std::endl;
+    iio_context_destroy(ctx);
+    ctx = nullptr;
+    return;
   }
 
-  std::cout << "LibreSDR capture started." << std::endl;
+  if (!rx1_i || !rx1_q)
+  {
+    std::cerr << "Error: LibreSDR - Cannot find RX1 I/Q channels (voltage2/voltage3)." << std::endl;
+    std::cerr << "  The LibreSDR firmware must be in 2R2T mode for dual RX." << std::endl;
+    std::cerr << "  Check: ssh root@<pluto_ip> then: fw_printenv compatible" << std::endl;
+    std::cerr << "  Should contain 'ad9361' not 'ad9364' for 2-channel mode." << std::endl;
+    iio_context_destroy(ctx);
+    ctx = nullptr;
+    return;
+  }
+
+  // Enable all 4 channels for streaming
+  iio_channel_enable(rx0_i);
+  iio_channel_enable(rx0_q);
+  iio_channel_enable(rx1_i);
+  iio_channel_enable(rx1_q);
+
+  std::cout << "LibreSDR: Enabled 4 RX streaming channels (2x I/Q)." << std::endl;
+
+  // Create the RX buffer
+  rxBuf = iio_device_create_buffer(rxDev, bufferSize, false);
+  if (!rxBuf)
+  {
+    std::cerr << "Error: LibreSDR - Failed to create RX buffer (size="
+              << bufferSize << ")." << std::endl;
+    iio_context_destroy(ctx);
+    ctx = nullptr;
+    return;
+  }
+
+  std::cout << "LibreSDR: Created RX buffer with " << bufferSize << " samples." << std::endl;
+  std::cout << "LibreSDR: Capture started successfully." << std::endl;
 }
 
 void LibreSdr::stop()
 {
-  if (soapyDevice != nullptr && rxStream != nullptr)
+  if (rxBuf)
   {
-    soapyDevice->deactivateStream(rxStream);
-    soapyDevice->closeStream(rxStream);
-    rxStream = nullptr;
+    iio_buffer_destroy(rxBuf);
+    rxBuf = nullptr;
   }
-  if (soapyDevice != nullptr)
+  if (ctx)
   {
-    SoapySDR::Device::unmake(soapyDevice);
-    soapyDevice = nullptr;
+    iio_context_destroy(ctx);
+    ctx = nullptr;
   }
+  phyDev = nullptr;
+  rxDev = nullptr;
+  rx0_i = rx0_q = rx1_i = rx1_q = nullptr;
 }
 
 void LibreSdr::process(IqData *buffer1, IqData *buffer2)
 {
-  if (soapyDevice == nullptr || rxStream == nullptr)
+  if (!ctx || !rxBuf)
   {
     std::cerr << "Error: LibreSDR - device not started." << std::endl;
     return;
   }
 
-  // Get the MTU (maximum transfer unit) for this stream
-  size_t mtu = soapyDevice->getStreamMTU(rxStream);
-  if (mtu == 0)
-  {
-    mtu = 1024; // sensible fallback
-  }
-
-  // Allocate per-channel receive buffers (CF32 = std::complex<float>)
-  std::vector<std::complex<float>> rxBuf0(mtu);
-  std::vector<std::complex<float>> rxBuf1(mtu);
-
-  // SoapySDR readStream expects an array of void* pointers, one per channel
-  void *buffs[2] = {rxBuf0.data(), rxBuf1.data()};
-
-  int flags = 0;
-  long long timeNs = 0;
+  // Get the step size (bytes between consecutive samples of the same channel)
+  const ptrdiff_t sampleSize = static_cast<ptrdiff_t>(iio_buffer_step(rxBuf));
 
   while (true)
   {
-    // Read samples from both channels simultaneously
-    int ret = soapyDevice->readStream(rxStream, buffs, mtu, flags, timeNs);
-
-    if (ret < 0)
+    // Refill the buffer (blocking read)
+    ssize_t nbytes = iio_buffer_refill(rxBuf);
+    if (nbytes < 0)
     {
-      // Handle overflow — log it but keep going
-      if (ret == SOAPY_SDR_OVERFLOW)
-      {
-        std::cerr << "Warning: LibreSDR overflow detected." << std::endl;
-        continue;
-      }
-      // Handle timeout — retry
-      if (ret == SOAPY_SDR_TIMEOUT)
-      {
-        continue;
-      }
-      // Other error — log and break
-      std::cerr << "Error: LibreSDR readStream returned "
-                << SoapySDR::errToStr(ret) << std::endl;
+      std::cerr << "Error: LibreSDR - iio_buffer_refill returned "
+                << nbytes << std::endl;
       break;
     }
 
-    size_t nReceived = static_cast<size_t>(ret);
+    // Get pointers to channel data
+    const char *rx0_i_start = static_cast<const char *>(iio_buffer_first(rxBuf, rx0_i));
+    const char *rx0_q_start = static_cast<const char *>(iio_buffer_first(rxBuf, rx0_q));
+    const char *rx1_i_start = static_cast<const char *>(iio_buffer_first(rxBuf, rx1_i));
+    const char *rx1_q_start = static_cast<const char *>(iio_buffer_first(rxBuf, rx1_q));
+    const char *bufEnd = static_cast<const char *>(iio_buffer_end(rxBuf));
 
-    // Push samples into the IqData ring buffers
+    // AD9361 samples are 16-bit signed integers (SC16)
+    size_t nSamples = 0;
+
     buffer1->lock();
     buffer2->lock();
-    for (size_t i = 0; i < nReceived; i++)
+
+    const char *p0i = rx0_i_start;
+    const char *p0q = rx0_q_start;
+    const char *p1i = rx1_i_start;
+    const char *p1q = rx1_q_start;
+
+    while (p0i < bufEnd && p1i < bufEnd)
     {
-      buffer1->push_back({static_cast<double>(rxBuf0[i].real()),
-                          static_cast<double>(rxBuf0[i].imag())});
-      buffer2->push_back({static_cast<double>(rxBuf1[i].real()),
-                          static_cast<double>(rxBuf1[i].imag())});
+      // Read 16-bit signed samples and convert to double
+      int16_t i0 = *reinterpret_cast<const int16_t *>(p0i);
+      int16_t q0 = *reinterpret_cast<const int16_t *>(p0q);
+      int16_t i1 = *reinterpret_cast<const int16_t *>(p1i);
+      int16_t q1 = *reinterpret_cast<const int16_t *>(p1q);
+
+      buffer1->push_back({static_cast<double>(i0), static_cast<double>(q0)});
+      buffer2->push_back({static_cast<double>(i1), static_cast<double>(q1)});
+
+      p0i += sampleSize;
+      p0q += sampleSize;
+      p1i += sampleSize;
+      p1q += sampleSize;
+      nSamples++;
     }
+
     buffer1->unlock();
     buffer2->unlock();
 
     // Save IQ data to file if enabled
-    if (*saveIq)
+    if (*saveIq && nSamples > 0)
     {
-      saveIqFile.write(reinterpret_cast<const char *>(rxBuf0.data()),
-                       nReceived * sizeof(std::complex<float>));
-      saveIqFile.write(reinterpret_cast<const char *>(rxBuf1.data()),
-                       nReceived * sizeof(std::complex<float>));
+      // Save as interleaved SC16: [I0 Q0] [I0 Q0] ... [I1 Q1] [I1 Q1] ...
+      // Rewrite from buffer pointers
+      saveIqFile.write(rx0_i_start, nbytes / 2);
+      saveIqFile.write(rx1_i_start, nbytes / 2);
     }
   }
 }
@@ -261,25 +306,26 @@ void LibreSdr::replay(IqData *buffer1, IqData *buffer2,
     return;
   }
 
-  // Replay file format: interleaved CF32 samples, channel 0 then channel 1
-  // per block of nSamples.
-  const size_t blockSize = 1024;
-  std::vector<std::complex<float>> rxBuf0(blockSize);
-  std::vector<std::complex<float>> rxBuf1(blockSize);
+  // Replay file format: SC16 interleaved, channel 0 block then channel 1 block
+  const size_t blockSamples = 1024;
+  // Each sample is 2 x int16_t (I and Q)
+  const size_t sampleBytes = 2 * sizeof(int16_t);
+  std::vector<int16_t> rawBuf0(blockSamples * 2);
+  std::vector<int16_t> rawBuf1(blockSamples * 2);
 
   while (true)
   {
     // Read channel 0 block
-    inFile.read(reinterpret_cast<char *>(rxBuf0.data()),
-                blockSize * sizeof(std::complex<float>));
+    inFile.read(reinterpret_cast<char *>(rawBuf0.data()),
+                blockSamples * sampleBytes);
     std::streamsize bytesRead0 = inFile.gcount();
-    size_t samplesRead0 = bytesRead0 / sizeof(std::complex<float>);
+    size_t samplesRead0 = bytesRead0 / sampleBytes;
 
     // Read channel 1 block
-    inFile.read(reinterpret_cast<char *>(rxBuf1.data()),
-                blockSize * sizeof(std::complex<float>));
+    inFile.read(reinterpret_cast<char *>(rawBuf1.data()),
+                blockSamples * sampleBytes);
     std::streamsize bytesRead1 = inFile.gcount();
-    size_t samplesRead1 = bytesRead1 / sizeof(std::complex<float>);
+    size_t samplesRead1 = bytesRead1 / sampleBytes;
 
     size_t nSamples = std::min(samplesRead0, samplesRead1);
 
@@ -298,10 +344,10 @@ void LibreSdr::replay(IqData *buffer1, IqData *buffer2,
     buffer2->lock();
     for (size_t i = 0; i < nSamples; i++)
     {
-      buffer1->push_back({static_cast<double>(rxBuf0[i].real()),
-                          static_cast<double>(rxBuf0[i].imag())});
-      buffer2->push_back({static_cast<double>(rxBuf1[i].real()),
-                          static_cast<double>(rxBuf1[i].imag())});
+      buffer1->push_back({static_cast<double>(rawBuf0[i * 2]),
+                          static_cast<double>(rawBuf0[i * 2 + 1])});
+      buffer2->push_back({static_cast<double>(rawBuf1[i * 2]),
+                          static_cast<double>(rawBuf1[i * 2 + 1])});
     }
     buffer1->unlock();
     buffer2->unlock();

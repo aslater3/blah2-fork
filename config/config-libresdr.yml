@@ -1,16 +1,17 @@
 # LibreSDR configuration for blah2 passive radar.
+# The LibreSDR is an AD9363-based device (PlutoSDR compatible) with dual RX/TX.
 # Reference channel is RX0 (index 0), surveillance channel is RX1 (index 1).
 # Dual TX channels are not used.
+# Requires firmware in 2R2T mode (AD9361 compatible mode).
 capture:
   fs: 2000000
   fc: 576000000
   device:
     type: "LibreSDR"
     gain: [30.0, 40.0]            # gain[0] = reference (lower), gain[1] = surveillance (higher)
-    antenna: ["A_BALANCED", "A_BALANCED"]  # per-channel antenna port
     bandwidth: 0                   # analog filter bandwidth in Hz (0 = auto)
-    device_args: "driver=plutosdr" # SoapySDR device argument string
-    # For network (PlutoSDR IP): device_args: "driver=plutosdr,hostname=192.168.2.1"
+    uri: "usb:"                    # libiio URI: "usb:" for USB, "ip:192.168.2.1" for network
+    buffer_size: 16384             # samples per buffer read
   replay:
     state: false
     loop: true

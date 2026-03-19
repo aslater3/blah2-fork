@@ -20,7 +20,7 @@ find_package(Catch2 CONFIG REQUIRED)
 set(CMAKE_PREFIX_PATH "/opt/uhd" ${CMAKE_PREFIX_PATH})
 find_package(UHD CONFIG REQUIRED)
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(SoapySDR REQUIRED IMPORTED_TARGET SoapySDR)
+pkg_check_modules(LIBIIO REQUIRED IMPORTED_TARGET libiio)
 
 set(PROJECT_ROOT "${PROJECT_SOURCE_DIR}")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_ROOT}/bin")
@@ -75,7 +75,7 @@ target_link_libraries(blah2 PRIVATE
   httplib::httplib
   armadillo
   ${UHD_LIBRARIES}
-  PkgConfig::SoapySDR
+  PkgConfig::LIBIIO
   fftw3
   fftw3_threads
   sdrplay

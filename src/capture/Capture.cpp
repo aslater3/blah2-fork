@@ -212,26 +212,18 @@ std::unique_ptr<Source> Capture::factory_source(const std::string& type, c4::yml
       }
       return std::make_unique<DualRtl>(type, fc, fs, path, &saveIq, gain, serials, syncCfg);
     }
-    // LibreSDR (dual RX via SoapySDR)
+    // LibreSDR (dual RX AD9363 via libiio)
     else if (type == VALID_TYPE[5])
     {
       std::vector<double> gain;
-      std::vector<std::string> antenna;
       double bandwidth = 0;
-      std::string deviceArgs;
+      std::string uri = "usb:";
+      size_t bufferSize = 16384;
       float _gain;
       for (auto child : config["gain"].children())
       {
         c4::atof(child.val(), &_gain);
         gain.push_back(static_cast<double>(_gain));
-      }
-      auto antennaNode = config.find_child(c4::to_csubstr("antenna"));
-      if (antennaNode.valid())
-      {
-        for (auto child : antennaNode.children())
-        {
-          antenna.emplace_back(child.val().data(), child.val().size());
-        }
       }
       auto bwNode = config.find_child(c4::to_csubstr("bandwidth"));
       if (bwNode.valid())
@@ -240,13 +232,20 @@ std::unique_ptr<Source> Capture::factory_source(const std::string& type, c4::yml
         c4::atof(bwNode.val(), &_bw);
         bandwidth = static_cast<double>(_bw);
       }
-      auto argsNode = config.find_child(c4::to_csubstr("device_args"));
-      if (argsNode.valid())
+      auto uriNode = config.find_child(c4::to_csubstr("uri"));
+      if (uriNode.valid())
       {
-        deviceArgs = std::string(argsNode.val().data(), argsNode.val().size());
+        uri = std::string(uriNode.val().data(), uriNode.val().size());
+      }
+      auto bufNode = config.find_child(c4::to_csubstr("buffer_size"));
+      if (bufNode.valid())
+      {
+        int _bufSize;
+        bufNode >> _bufSize;
+        bufferSize = static_cast<size_t>(_bufSize);
       }
       return std::make_unique<LibreSdr>(type, fc, fs, path, &saveIq,
-        gain, antenna, bandwidth, deviceArgs);
+        gain, bandwidth, uri, bufferSize);
     }
     // handle unknown type
     std::cerr << "Error: Source type does not exist." << std::endl;

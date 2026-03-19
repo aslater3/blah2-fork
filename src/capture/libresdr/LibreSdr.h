@@ -1,9 +1,10 @@
 /// @file LibreSdr.h
 /// @class LibreSdr
-/// @brief A class to capture data on the LibreSDR (dual RX) via SoapySDR.
-/// @details Uses the SoapySDR C++ API to stream from both RX channels
-/// simultaneously. RX0 is mapped to the reference channel and RX1 to
-/// the surveillance channel. The dual TX channels are not used.
+/// @brief A class to capture data on the LibreSDR (dual RX AD9363) via libiio.
+/// @details Uses libiio to stream from both RX channels simultaneously.
+/// RX0 is mapped to the reference channel and RX1 to the surveillance channel.
+/// The dual TX channels are not used.
+/// Works over both USB and network (IP) connections.
 
 #ifndef LIBRESDR_H
 #define LIBRESDR_H
@@ -15,8 +16,11 @@
 #include <string>
 #include <vector>
 
-// Forward-declare SoapySDR types to avoid exposing the header here.
-namespace SoapySDR { class Device; class Stream; }
+// Forward-declare libiio types
+struct iio_context;
+struct iio_device;
+struct iio_channel;
+struct iio_buffer;
 
 class LibreSdr : public Source
 {
@@ -24,20 +28,37 @@ private:
   /// @brief Per-channel RX gain (dB). Index 0 = reference, 1 = surveillance.
   std::vector<double> gain;
 
-  /// @brief Per-channel antenna port name (e.g. "LNAW").
-  std::vector<std::string> antenna;
-
   /// @brief Analog filter bandwidth (Hz). 0 = automatic.
   double bandwidth;
 
-  /// @brief SoapySDR driver/device argument string (e.g. "driver=lime").
-  std::string deviceArgs;
+  /// @brief IIO URI for device connection (e.g. "usb:" or "ip:192.168.2.1").
+  std::string uri;
 
-  /// @brief Pointer to the opened SoapySDR device.
-  SoapySDR::Device *soapyDevice;
+  /// @brief Number of samples per buffer read.
+  size_t bufferSize;
 
-  /// @brief Pointer to the active RX stream.
-  SoapySDR::Stream *rxStream;
+  /// @brief libiio context.
+  iio_context *ctx;
+
+  /// @brief AD9363 PHY device (for configuration).
+  iio_device *phyDev;
+
+  /// @brief RX streaming device (e.g. cf-ad9361-lpc).
+  iio_device *rxDev;
+
+  /// @brief RX channel I/Q pointers for channel 0 and 1.
+  iio_channel *rx0_i;
+  iio_channel *rx0_q;
+  iio_channel *rx1_i;
+  iio_channel *rx1_q;
+
+  /// @brief libiio RX buffer.
+  iio_buffer *rxBuf;
+
+  /// @brief Helper to configure an AD9363 RX channel via PHY attributes.
+  /// @param phyChan PHY channel index (0 or 1).
+  /// @param gainDb Gain in dB.
+  void configure_rx_channel(int phyChan, double gainDb);
 
 public:
   /// @brief Constructor.
@@ -47,23 +68,23 @@ public:
   /// @param path Absolute path to IQ save location.
   /// @param saveIq Pointer to IQ save flag.
   /// @param gain Per-channel gain vector.
-  /// @param antenna Per-channel antenna port vector.
   /// @param bandwidth Analog filter bandwidth (Hz), 0 for auto.
-  /// @param deviceArgs SoapySDR device argument string.
+  /// @param uri IIO URI string (e.g. "usb:" or "ip:192.168.2.1").
+  /// @param bufferSize Number of samples per buffer read.
   LibreSdr(std::string type, uint32_t fc, uint32_t fs,
            std::string path, bool *saveIq,
            std::vector<double> gain,
-           std::vector<std::string> antenna,
            double bandwidth,
-           std::string deviceArgs);
+           std::string uri,
+           size_t bufferSize);
 
-  /// @brief Destructor — cleans up SoapySDR resources.
+  /// @brief Destructor — cleans up libiio resources.
   ~LibreSdr();
 
-  /// @brief Open and configure the SoapySDR device.
+  /// @brief Open and configure the libiio device with dual RX.
   void start() override;
 
-  /// @brief Deactivate and close the RX stream and device.
+  /// @brief Destroy the IIO buffer and context.
   void stop() override;
 
   /// @brief Continuously read dual-channel RX samples into the buffers.

@@ -12,7 +12,6 @@ RUN apt-get update && apt-get install -y software-properties-common \
   libfftw3-dev pkg-config gfortran libhackrf-dev \
   libuhd-dev \
   uhd-host \
-  libsoapysdr-dev soapysdr-module-remote \
   libiio-dev libad9361-dev \
   libusb-dev libusb-1.0.0-dev \
   && apt-get autoremove -y \
@@ -57,11 +56,6 @@ RUN uhd_images_downloader
 RUN git clone https://github.com/krakenrf/librtlsdr /opt/librtlsdr \
   && cd /opt/librtlsdr && mkdir build && cd build \
   && cmake ../ -DINSTALL_UDEV_RULES=ON -DDETACH_KERNEL_DRIVER=ON && make && make install && ldconfig
-
-# install SoapyPlutoSDR module (PlutoSDR/AD9363 support for SoapySDR)
-RUN git clone https://github.com/pothosware/SoapyPlutoSDR.git /opt/SoapyPlutoSDR \
-  && cd /opt/SoapyPlutoSDR && mkdir build && cd build \
-  && cmake .. && make -j$(nproc) && make install && ldconfig
 
 FROM blah2_env as blah2
 LABEL maintainer="30hours <nathan@30hours.dev>"
