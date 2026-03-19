@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y software-properties-common \
   libfftw3-dev pkg-config gfortran libhackrf-dev \
   libuhd-dev \
   uhd-host \
+  libsoapysdr-dev soapysdr-module-lms7 \
   libusb-dev libusb-1.0.0-dev \
   && apt-get autoremove -y \
   && apt-get clean -y \
