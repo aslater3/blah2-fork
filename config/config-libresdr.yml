@@ -1,0 +1,96 @@
+# LibreSDR configuration for blah2 passive radar.
+# Reference channel is RX0 (index 0), surveillance channel is RX1 (index 1).
+# Dual TX channels are not used.
+capture:
+  fs: 2000000
+  fc: 576000000
+  device:
+    type: "LibreSDR"
+    gain: [30.0, 40.0]            # gain[0] = reference (lower), gain[1] = surveillance (higher)
+    antenna: ["LNAW", "LNAW"]    # per-channel antenna port
+    bandwidth: 0                   # analog filter bandwidth in Hz (0 = auto)
+    device_args: "driver=lime"    # SoapySDR device argument string
+  replay:
+    state: false
+    loop: true
+    file: '/opt/blah2/replay/file.libresdr'
+
+process:
+  data:
+    cpi: 0.5
+    buffer: 8.0
+    overlap: 0
+  ambiguity:
+    delayMin: -10
+    delayMax: 400
+    dopplerMin: -503
+    dopplerMax: 503
+  clutter:
+    enable: true
+    delayMin: -10
+    delayMax: 200
+  detection:
+    enable: true
+    pfa: 0.00001
+    nGuard: 2
+    nTrain: 16
+    minDelay: 5
+    minDoppler: 15
+    pilotNotchEnable: true
+    nCentroid: 6
+  tracker:
+    enable: true
+    initiate:
+      M: 3
+      N: 5
+      maxAcc: 10
+    delete: 10
+    smooth: "none"
+
+network:
+  ip: 0.0.0.0
+  ports:
+    api: 3000
+    map: 3001
+    detection: 3002
+    track: 3003
+    timestamp: 4000
+    timing: 4001
+    iqdata: 4002
+    config: 4003
+  stream:
+    map: true
+    detection: true
+    track: true
+    timestamp: true
+    timing: false
+    iqdata: false
+
+truth:
+  adsb:
+    enabled: false
+    tar1090: 'adsb.30hours.dev'
+    adsb2dd: 'adsb2dd.30hours.dev'
+  ais:
+    enabled: false
+    ip: 0.0.0.0
+    port: 30001
+
+location:
+  rx:
+    latitude: 53.76355598527745
+    longitude: -2.7685548091440078
+    altitude: 50
+    name: "Preston"
+  tx:
+    latitude: 53.6122
+    longitude: -2.5274
+    altitude: 456
+    name: "Winter Hill"
+
+save:
+  iq: false
+  map: false
+  detection: false
+  timing: false
+  path: "/blah2/save/"

@@ -4,12 +4,13 @@
 #include "hackrf/HackRf.h"
 #include "kraken/Kraken.h"
 #include "dualrtl/DualRtl.h"
+#include "libresdr/LibreSdr.h"
 #include <iostream>
 #include <thread>
 #include <httplib.h>
 
 // constants
-const std::string Capture::VALID_TYPE[5] = {"RspDuo", "Usrp", "HackRF", "Kraken", "dual-rtl"};
+const std::string Capture::VALID_TYPE[6] = {"RspDuo", "Usrp", "HackRF", "Kraken", "dual-rtl", "LibreSDR"};
 
 // constructor
 Capture::Capture(std::string _type, uint32_t _fs, uint32_t _fc, std::string _path)
@@ -210,6 +211,42 @@ std::unique_ptr<Source> Capture::factory_source(const std::string& type, c4::yml
         }
       }
       return std::make_unique<DualRtl>(type, fc, fs, path, &saveIq, gain, serials, syncCfg);
+    }
+    // LibreSDR (dual RX via SoapySDR)
+    else if (type == VALID_TYPE[5])
+    {
+      std::vector<double> gain;
+      std::vector<std::string> antenna;
+      double bandwidth = 0;
+      std::string deviceArgs;
+      float _gain;
+      for (auto child : config["gain"].children())
+      {
+        c4::atof(child.val(), &_gain);
+        gain.push_back(static_cast<double>(_gain));
+      }
+      auto antennaNode = config.find_child(c4::to_csubstr("antenna"));
+      if (antennaNode.valid())
+      {
+        for (auto child : antennaNode.children())
+        {
+          antenna.emplace_back(child.val().data(), child.val().size());
+        }
+      }
+      auto bwNode = config.find_child(c4::to_csubstr("bandwidth"));
+      if (bwNode.valid())
+      {
+        float _bw;
+        c4::atof(bwNode.val(), &_bw);
+        bandwidth = static_cast<double>(_bw);
+      }
+      auto argsNode = config.find_child(c4::to_csubstr("device_args"));
+      if (argsNode.valid())
+      {
+        deviceArgs = std::string(argsNode.val().data(), argsNode.val().size());
+      }
+      return std::make_unique<LibreSdr>(type, fc, fs, path, &saveIq,
+        gain, antenna, bandwidth, deviceArgs);
     }
     // handle unknown type
     std::cerr << "Error: Source type does not exist." << std::endl;

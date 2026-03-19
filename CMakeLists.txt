@@ -19,6 +19,7 @@ find_package(Catch2 CONFIG REQUIRED)
 
 set(CMAKE_PREFIX_PATH "/opt/uhd" ${CMAKE_PREFIX_PATH})
 find_package(UHD CONFIG REQUIRED)
+find_package(SoapySDR CONFIG REQUIRED)
 
 set(PROJECT_ROOT "${PROJECT_SOURCE_DIR}")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_ROOT}/bin")
@@ -48,6 +49,7 @@ add_executable(blah2
   src/capture/hackrf/HackRf.cpp
   src/capture/dualrtl/DualRtl.cpp
   src/capture/kraken/Kraken.cpp
+  src/capture/libresdr/LibreSdr.cpp
   src/process/ambiguity/Ambiguity.cpp
   src/process/clutter/WienerHopf.cpp
   src/process/detection/CfarDetector1D.cpp
@@ -72,6 +74,7 @@ target_link_libraries(blah2 PRIVATE
   httplib::httplib
   armadillo
   ${UHD_LIBRARIES}
+  SoapySDR
   fftw3
   fftw3_threads
   sdrplay
